@@ -16,18 +16,22 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 const A = require('./_assert.js');
 const { SidecarFixture } = require('./helpers/sidecar-fixture.js');
 
 const SECRET = 'rk-live-verySECRET-9876';
+const MANAGED_SECRET = 'github-managed-SECRET-4321';
+const CONNECTOR_KEY = 'ab'.repeat(32);
+const HOST_PROOF = crypto.createHmac('sha256', Buffer.from(CONNECTOR_KEY, 'hex')).update('gx10-factory-servicekeys:v1').digest('hex');
 
 (async () => {
-  const fixture = SidecarFixture.create({ prefix: 'sk-servicekeys-' });
+  const fixture = SidecarFixture.create({ prefix: 'sk-servicekeys-', env: { STARNET_CONNECTOR_ENCRYPTION_KEY: CONNECTOR_KEY, STARNET_TRUST_LOCAL_PEERS: '1' } });
   await fixture.start();
   const B = () => fixture.baseUrl;
   let apiToken = fixture.token;
-  const j = async (m, p, body) => {
-    const headers = { 'Content-Type': 'application/json', Origin: B() };
+  const j = async (m, p, body, extraHeaders) => {
+    const headers = Object.assign({ 'Content-Type': 'application/json', Origin: B() }, extraHeaders || {});
     if (apiToken) headers['X-StarNet-Token'] = apiToken;
     const r = await fetch(B() + p, { method: m, headers, body: body ? JSON.stringify(body) : undefined });
     const t = await r.text(); let v; try { v = JSON.parse(t); } catch (_) { v = t; }
@@ -53,6 +57,22 @@ const SECRET = 'rk-live-verySECRET-9876';
     A.eq(list.body.keys[0].name, 'Resend', 'row keeps the display name');
     A.eq(list.body.keys[0].enabled, true, 'new key enabled by default');
     A.ok(list.text.indexOf(SECRET) < 0, 'list response NEVER contains the key value');
+
+    // ---- GX10 host reconciliation: separate proof, managed metadata only, immutable normal controls ----
+    const desired = { keys: [{ sourceId: 'key_github', name: 'GitHub', envVar: 'GITHUB_API_KEY', key: MANAGED_SECRET, revision: 1 }] };
+    A.eq((await j('PUT', '/api/host/servicekeys/reconcile', desired)).status, 403, 'host reconcile needs separate proof');
+    A.eq((await j('PUT', '/api/host/servicekeys/reconcile', desired, { 'X-StarNet-Host-Proof': '00'.repeat(32) })).status, 403, 'wrong host proof refused');
+    const managed = await j('PUT', '/api/host/servicekeys/reconcile', desired, { 'X-StarNet-Host-Proof': HOST_PROOF });
+    A.eq(managed.status, 200, 'proved loopback host snapshot reconciles');
+    A.ok(managed.text.indexOf(MANAGED_SECRET) < 0 && managed.text.indexOf('key_github') < 0, 'reconcile response contains no value or source identity');
+    const managedList = await j('GET', '/api/servicekeys');
+    const github = managedList.body.keys.find(row => row.name === 'GitHub');
+    A.eq(github.managed, true, 'list marks GX10 ownership');
+    A.eq(github.autonomous, false, 'managed key remains watched-only');
+    A.ok(managedList.text.indexOf(MANAGED_SECRET) < 0 && managedList.text.indexOf('key_github') < 0, 'list hides managed value and source identity');
+    A.eq((await j('POST', '/api/servicekeys/toggle', { id: github.id, enabled: false })).status, 409, 'normal toggle cannot alter managed key');
+    A.eq((await j('POST', '/api/servicekeys/autonomy', { id: github.id, autonomous: true })).status, 409, 'normal autonomy cannot alter managed key');
+    A.eq((await j('POST', '/api/servicekeys/remove', { id: github.id })).status, 409, 'normal removal cannot alter managed key');
 
     // ---- validation refusals ----
     A.eq((await j('POST', '/api/servicekeys', { name: '', key: 'x' })).status, 400, 'empty name -> 400');
@@ -86,10 +106,15 @@ const SECRET = 'rk-live-verySECRET-9876';
     await fixture.restart();
     apiToken = fixture.token;
     const after = await j('GET', '/api/servicekeys');
-    A.eq(after.body.keys.length, 1, 'REBOOT: key survived the restart');
-    A.eq(after.body.keys[0].envVar, 'RESEND_API_KEY', 'REBOOT: env var intact');
-    A.eq(after.body.keys[0].docsUrl, 'https://new.docs', 'REBOOT: updated docsUrl persisted');
+    A.eq(after.body.keys.length, 2, 'REBOOT: manual and managed keys survived the restart');
+    const afterResend = after.body.keys.find(row => row.name === 'Resend');
+    A.eq(afterResend.envVar, 'RESEND_API_KEY', 'REBOOT: env var intact');
+    A.eq(afterResend.docsUrl, 'https://new.docs', 'REBOOT: updated docsUrl persisted');
     A.ok(after.text.indexOf(SECRET) < 0, 'REBOOT: list still never echoes the value');
+
+    const cleared = await j('PUT', '/api/host/servicekeys/reconcile', { keys: [] }, { 'X-StarNet-Host-Proof': HOST_PROOF });
+    A.eq(cleared.status, 200, 'empty desired snapshot removes managed rows');
+    A.eq((await j('GET', '/api/servicekeys')).body.keys.length, 1, 'manual row survives managed removal');
 
     // ---- toggle off, then remove ----
     const off = await j('POST', '/api/servicekeys/toggle', { id: 'resend', enabled: false });

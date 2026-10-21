@@ -85,9 +85,26 @@
 
   function isRecord(v) { return v && typeof v === 'object' && !Array.isArray(v); }
 
+  function nowOf(opts) { return opts && typeof opts.now === 'number' ? opts.now : Date.now(); }
+  function isExpired(record, opts) {
+    return record && record.managedBy === 'gx10'
+      && (!(typeof record.expiresAt === 'number') || record.expiresAt <= nowOf(opts));
+  }
+
+  function managedId(sourceId) {
+    const value = String(sourceId || '');
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < value.length; i++) {
+      hash ^= value.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return 'gx10-' + ('00000000' + hash.toString(16)).slice(-8);
+  }
+
   // the shape every /api response carries — by construction there is no `key` field to leak.
-  function toPublic(record) {
+  function toPublic(record, opts) {
     const r = isRecord(record) ? record : {};
+    const managed = r.managedBy === 'gx10';
     return {
       id: String(r.id || ''),
       name: String(r.name || ''),
@@ -98,7 +115,10 @@
       unattendedSupported: r.unattendedSupported !== false,
       unattendedReason: String(r.unattendedReason || ''),
       addedAt: (typeof r.addedAt === 'number') ? r.addedAt : 0,
-      last4: mask(r.key)
+      last4: mask(r.key),
+      managed: managed,
+      managedBy: managed ? 'gx10' : '',
+      managedStatus: managed ? (isExpired(r, opts) ? 'expired' : 'active') : ''
     };
   }
 
@@ -157,6 +177,7 @@
     const src = cleanList(list);
     const prev = src.find(r => r.id === String(id || ''));
     if (!prev) return { error: 'no such service key' };
+    if (prev.managedBy === 'gx10') return { error: 'managed keys must be changed in GX10 Command Center' };
     const record = Object.assign({}, prev, { enabled: !!enabled });
     return { list: src.map(r => (r.id === prev.id ? record : r)), record: record };
   }
@@ -167,6 +188,7 @@
     const src = cleanList(list);
     const prev = src.find(r => r.id === String(id || ''));
     if (!prev) return { error: 'no such service key' };
+    if (prev.managedBy === 'gx10') return { error: 'managed keys cannot be granted unattended use' };
     if (autonomous && prev.unattendedSupported === false) return { error: prev.unattendedReason || 'unattended use is not supported for this integration' };
     const record = Object.assign({}, prev, { autonomous: !!autonomous });
     return { list: src.map(r => (r.id === prev.id ? record : r)), record: record };
@@ -186,7 +208,7 @@
     if (!want) return { ok: false, reason: 'unknown' };
     // Checked before the list: a legacy or hand-edited row carrying a provider var is still never spent here.
     if (reservedSet(opts).has(want)) return { ok: false, reason: 'reserved' };
-    const row = cleanList(list).find(r => r.envVar === want && r.enabled !== false && r.key);
+    const row = cleanList(list).find(r => r.envVar === want && r.enabled !== false && r.key && !isExpired(r, opts));
     if (!row) return { ok: false, reason: 'unknown' };
     if (surface !== 'interactive' && (row.autonomous !== true || row.unattendedSupported === false)) {
       return {
@@ -203,7 +225,59 @@
     const src = cleanList(list);
     const prev = src.find(r => r.id === String(id || ''));
     if (!prev) return { error: 'no such service key' };
+    if (prev.managedBy === 'gx10') return { error: 'managed keys must be removed in GX10 Command Center' };
     return { list: src.filter(r => r.id !== prev.id), removed: prev };
+  }
+
+  function reconcileManaged(list, desired, now, opts) {
+    const src = cleanList(list);
+    const manual = src.filter(r => r.managedBy !== 'gx10');
+    const previous = src.filter(r => r.managedBy === 'gx10');
+    const reserved = reservedSet(opts);
+    const items = Array.isArray(desired) ? desired : null;
+    if (!items) return { error: 'keys must be an array' };
+    if (items.length > LIST_MAX) return { error: 'too many managed service keys' };
+    const seenSources = new Set(), seenEnv = new Set(), records = [], errors = [];
+    for (const raw of items) {
+      const item = isRecord(raw) ? raw : {};
+      const sourceId = String(item.sourceId || '');
+      const name = String(item.name || '').trim();
+      const envVar = String(item.envVar || '').trim();
+      const key = String(item.key || '');
+      const revision = Number(item.revision);
+      if (!/^[A-Za-z0-9_-]{1,160}$/.test(sourceId) || !name || name.length > NAME_MAX
+          || !/^[A-Z][A-Z0-9_]{1,79}$/.test(envVar) || !key || key.length > KEY_MAX
+          || /[^!-~]/.test(key) || !Number.isSafeInteger(revision) || revision < 1
+          || reserved.has(envVar) || /^(?:STARNET|SKYNET)_/.test(envVar)) {
+        return { error: 'invalid managed key snapshot' };
+      }
+      if (seenSources.has(sourceId) || seenEnv.has(envVar)) return { error: 'duplicate managed key snapshot' };
+      seenSources.add(sourceId); seenEnv.add(envVar);
+      if (manual.some(r => r.envVar === envVar)) {
+        errors.push({ code: 'manual_collision', envVar: envVar });
+        continue;
+      }
+      const prior = previous.find(r => r.sourceId === sourceId);
+      const id = prior ? prior.id : managedId(sourceId);
+      if (manual.some(r => r.id === id) || records.some(r => r.id === id)) return { error: 'managed key identity collision' };
+      records.push({
+        id: id,
+        name: name,
+        envVar: envVar,
+        key: key,
+        docsUrl: '',
+        enabled: true,
+        autonomous: false,
+        unattendedSupported: false,
+        unattendedReason: 'GX10-managed keys are available only in watched sessions.',
+        addedAt: prior && typeof prior.addedAt === 'number' ? prior.addedAt : now,
+        managedBy: 'gx10',
+        sourceId: sourceId,
+        revision: revision,
+        expiresAt: now + Math.min(90000, Math.max(1000, Number(opts && opts.leaseMs) || 90000))
+      });
+    }
+    return { list: manual.concat(records), managed: records, errors: errors };
   }
 
   /* Write every ENABLED key into `env` and return the new owned-set (env var name -> true).
@@ -219,6 +293,7 @@
     const reserved = reservedSet(opts);
     for (const r of cleanList(list)) {
       if (r.enabled === false) continue;
+      if (isExpired(r, opts)) continue;
       if (reserved.has(r.envVar)) continue;   // a pre-guard persisted record must still never shadow a provider key
       if (r.envVar && r.key) want[r.envVar] = String(r.key);
     }
@@ -255,6 +330,7 @@
     const out = {};
     for (const r of cleanList(list)) {
       if (r.enabled === false) continue;
+      if (isExpired(r, opts)) continue;
       if (surface !== 'interactive' && (r.autonomous !== true || r.unattendedSupported === false)) continue;   // no unattended support/grant -> no key for an unattended run
       if (!r.envVar || reserved.has(r.envVar)) continue;   // never let a paste shadow a provider/billing key
       const v = src[r.envVar];
@@ -269,7 +345,7 @@
      advertising an env var the run can't read would be the exact truthful-telemetry violation the
      quest block comments warn about. */
   function promptBlock(list, opts) {
-    const rows = cleanList(list).filter(r => r.enabled !== false && r.envVar && r.key);
+    const rows = cleanList(list).filter(r => r.enabled !== false && r.envVar && r.key && !isExpired(r, opts));
     if (!rows.length) return '';
     // WHICH WAY can this run actually spend a key? The block must describe only the routes the run HAS,
     // or it teaches a tool the model wasn't given (the truthful-telemetry violation this block's own
@@ -312,5 +388,5 @@
       + '\n</service_keys>';
   }
 
-  return { NAME_MAX, KEY_MAX, LIST_MAX, slug, deriveEnvVar, validate, mask, toPublic, upsert, setEnabled, setAutonomous, remove, applyEnv, runEnv, resolveForRequest, promptBlock };
+  return { NAME_MAX, KEY_MAX, LIST_MAX, slug, deriveEnvVar, validate, mask, toPublic, upsert, setEnabled, setAutonomous, remove, reconcileManaged, isExpired, applyEnv, runEnv, resolveForRequest, promptBlock };
 });
