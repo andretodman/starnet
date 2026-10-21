@@ -26,8 +26,12 @@ const dns = require('node:dns');
 // Consume the native envelope key before any subsystem can snapshot process.env
 // or launch a worker. The key stays in the vault closure, never a child environment.
 const connectorVaultMod = require('./connector-vault.js');
+const connectorKeyHex = String(process.env.STARNET_CONNECTOR_ENCRYPTION_KEY || '');
 const connectorVault = connectorVaultMod.makeConnectorVault({ fs, path,
-  keyHex: process.env.STARNET_CONNECTOR_ENCRYPTION_KEY || '', required: process.env.STARNET_DESKTOP_SHELL === '1' });
+  keyHex: connectorKeyHex, required: process.env.STARNET_DESKTOP_SHELL === '1' });
+const GX10_HOST_PROOF = /^[a-f0-9]{64}$/.test(connectorKeyHex)
+  ? crypto.createHmac('sha256', Buffer.from(connectorKeyHex, 'hex')).update('gx10-factory-servicekeys:v1').digest('hex')
+  : '';
 delete process.env.STARNET_CONNECTOR_ENCRYPTION_KEY;
 // Why the desktop shell could not hand over a key (non-secret, e.g. "the credential store refused access (...)").
 // Without it the user only ever saw "locked" and support had nothing to go on.
@@ -11804,6 +11808,7 @@ const ROUTES = [
   { m: 'GET', exact: '/api/servicekeys/catalog', h: handleServiceKeysCatalog },
   { m: 'POST', exact: '/api/servicekeys/autonomy', h: handleServiceKeyAutonomy },
   { m: 'POST', exact: '/api/servicekeys/remove', h: handleServiceKeyRemove },
+  { m: 'PUT', exact: '/api/host/servicekeys/reconcile', h: handleManagedServiceKeysReconcile },
   { m: 'GET', prefix: '/api/toolsets', h: handleToolsetsList },
   { m: 'POST', prefix: '/api/toolsets/', h: handleToolsetToggle },
   { m: 'GET', prefix: '/api/slash/catalog', h: serveSlashCatalog },
@@ -14674,6 +14679,39 @@ function handleServiceKeysList(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify({ keys: serviceKeys.map(serviceKeysMod.toPublic).sort((a, b) => a.name.localeCompare(b.name)) }));
 }
+function validGx10HostProof(req) {
+  if (!GX10_HOST_PROOF) return false;
+  const remote = String((req.socket && req.socket.remoteAddress) || '');
+  if (remote !== '127.0.0.1' && remote !== '::1' && remote !== '::ffff:127.0.0.1') return false;
+  const supplied = String(req.headers['x-starnet-host-proof'] || '');
+  if (!/^[a-f0-9]{64}$/.test(supplied)) return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied, 'hex'), Buffer.from(GX10_HOST_PROOF, 'hex'));
+}
+async function handleManagedServiceKeysReconcile(req, res) {
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (!GX10_HOST_PROOF) return json(503, { ok: false, code: 'managed_key_encryption_unavailable' });
+  if (!validGx10HostProof(req)) return json(403, { ok: false, code: 'host_proof_refused' });
+  let body; try { body = JSON.parse(await readBody(req, 1 << 19)) || {}; } catch (_) { return json(400, { ok: false, code: 'invalid_snapshot' }); }
+  const reconciled = serviceKeysMod.reconcileManaged(serviceKeys, body.keys, Date.now(), {
+    reservedEnv: SERVICEKEYS_RESERVED_ENV,
+    leaseMs: 90000
+  });
+  if (reconciled.error) return json(400, { ok: false, code: 'invalid_snapshot' });
+  const previous = serviceKeys;
+  serviceKeys = reconciled.list.map(applyServiceKeyCatalogPolicy);
+  applyServiceKeysEnv();
+  if (!saveServiceKeys()) {
+    serviceKeys = previous;
+    applyServiceKeysEnv();
+    return json(500, { ok: false, code: 'managed_key_persist_failed' });
+  }
+  return json(200, {
+    ok: true,
+    managed: reconciled.managed.length,
+    withheld: reconciled.errors.length,
+    errors: reconciled.errors.map(item => ({ code: item.code }))
+  });
+}
 async function handleServiceKeyUpsert(req, res) {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   let body; try { body = JSON.parse(await readBody(req, 1 << 14)) || {}; } catch (e) { return json(400, { error: 'bad json' }); }
@@ -14695,7 +14733,7 @@ async function handleServiceKeyToggle(req, res) {
   let body; try { body = JSON.parse(await readBody(req, 1 << 12)) || {}; } catch (e) { return json(400, { error: 'bad json' }); }
   if (typeof body.enabled !== 'boolean') return json(400, { error: 'enabled must be a boolean' });
   const r = serviceKeysMod.setEnabled(serviceKeys, body.id, body.enabled);
-  if (r.error) return json(404, { error: r.error });
+  if (r.error) return json(serviceKeys.some(row => row && row.id === String(body.id || '')) ? 409 : 404, { error: r.error });
   serviceKeys = r.list;
   applyServiceKeysEnv();
   const saved = saveServiceKeys();
@@ -14728,7 +14766,7 @@ async function handleServiceKeyRemove(req, res) {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   let body; try { body = JSON.parse(await readBody(req, 1 << 12)) || {}; } catch (e) { return json(400, { error: 'bad json' }); }
   const r = serviceKeysMod.remove(serviceKeys, body.id);
-  if (r.error) return json(404, { error: r.error });
+  if (r.error) return json(serviceKeys.some(row => row && row.id === String(body.id || '')) ? 409 : 404, { error: r.error });
   const saved = saveServiceKeyRemoval(r.list);
   if (!saved) return json(500, { ok: false, saved: false, removed: false, error: 'key removal could not be verified in both protected recovery copies; the active key was left unchanged' });
   serviceKeys = r.list;

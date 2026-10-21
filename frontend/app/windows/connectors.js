@@ -1793,24 +1793,26 @@
     // BOTTOM: the custom store. Checkbox = kill-switch (key stays saved, agents stop seeing it); ✕ deletes.
     function kyRow(k, i) {
       const unattendedSupported = k.unattendedSupported !== false;
+      const managed = k.managed === true;
+      const autonomyDisabled = managed ? ' disabled' : (k.enabled && unattendedSupported ? '' : ' disabled');
       const docs = k.docsUrl ? ' <a class="dim" href="' + esc(k.docsUrl) + '" target="_blank" rel="noopener">docs ↗</a>' : '';
       return '<div class="mc-row" data-id="' + esc(k.id) + '" style="--ci:' + (i || 0) + '">' +
         '<div class="mc-top">' +
-          '<span class="set-row mc-enable"><input type="checkbox" data-ky-act="toggle"' + (k.enabled ? ' checked' : '') + ' aria-label="Enable key ' + esc(k.name) + '"></span>' +
+          '<span class="set-row mc-enable"><input type="checkbox" data-ky-act="toggle"' + (k.enabled ? ' checked' : '') + (managed ? ' disabled' : '') + ' aria-label="Enable key ' + esc(k.name) + '"></span>' +
           '<b>' + esc(k.name) + '</b> <span class="dim">' + esc(k.last4) + '</span>' +
-          '<span class="mc-state" style="color:' + (k.enabled ? 'var(--ok)' : 'var(--ph-dim)') + '">' + (k.enabled ? '● live for agents' : '○ off') + '</span></div>' +
+          '<span class="mc-state" style="color:' + (k.enabled ? 'var(--ok)' : 'var(--ph-dim)') + '">' + (managed ? (k.managedStatus === 'expired' ? '○ GX10 lease expired' : '● managed by GX10') : (k.enabled ? '● live for agents' : '○ off')) + '</span></div>' +
         '<div class="mc-url dim">env var <code>' + esc(k.envVar) + '</code>' + docs + '</div>' +
         // THE UNATTENDED GRANT, stated plainly. `enabled` = an agent may spend this while you watch;
         // this second switch = ...and while you don't (cron, Night Shift, a Telegram message). Default OFF
         // and never inferred, so pasting a key can't silently change what happens overnight.
         '<div class="set-row ky-auto"><input type="checkbox" data-ky-act="autonomy"' + (k.autonomous ? ' checked' : '') +
-          (k.enabled && unattendedSupported ? '' : ' disabled') + ' aria-label="Allow unattended use of ' + esc(k.name) + '">' +
-          '<span class="dim">' + (!unattendedSupported
+          autonomyDisabled + ' aria-label="Allow unattended use of ' + esc(k.name) + '">' +
+          '<span class="dim">' + (managed ? 'watched sessions only — change sharing in GX10 Command Center' : (!unattendedSupported
             ? 'watched sessions only — ' + esc(k.unattendedReason || 'unattended use is unsupported')
             : (k.autonomous
               ? 'usable in scheduled &amp; messaged runs'
-              : 'watched sessions only — tick to allow scheduled &amp; messaged runs')) + '</span></div>' +
-        '<div class="mc-acts"><button class="bb xs danger" data-ky-act="remove">✕ REMOVE</button></div>' +
+              : 'watched sessions only — tick to allow scheduled &amp; messaged runs'))) + '</span></div>' +
+        (managed ? '' : '<div class="mc-acts"><button class="bb xs danger" data-ky-act="remove">✕ REMOVE</button></div>') +
       '</div>';
     }
     async function kyRefresh() {
