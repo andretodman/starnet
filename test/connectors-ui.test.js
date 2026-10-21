@@ -304,6 +304,8 @@ function fakeStack(tools) {
     'KEYS labels custom-header credentials truthfully instead of calling every credential a token');
   A.ok(/k\.unattendedSupported !== false/.test(station) && /k\.enabled && unattendedSupported \? '' : ' disabled'/.test(station),
     'KEYS disables the unattended control for watched-only integrations');
+  A.ok(/k\.managed === true/.test(station) && /managed by GX10/.test(station) && /change sharing in GX10 Command Center/.test(station),
+    'GX10-managed keys are labeled and direct changes to GX10 instead of exposing local controls');
   A.ok(/p\.unattendedSupported === false \? 'manual' : 'apikey'/.test(station),
     'watched-only platform rows are explicitly manual setup, not automatic sign-in or API-key automation');
   A.ok(/Harness\.api\.get\('\/api\/servicekeys\/catalog'\)/.test(station) && /platformApi:\s*true/.test(station),
