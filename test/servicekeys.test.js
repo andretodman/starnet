@@ -176,6 +176,47 @@ const K = require('../sidecar/servicekeys.js');
   A.ok(/unattended unsupported/i.test(K.promptBlock(add.list)), 'prompt truthfully labels watched-only access');
 }
 
+// ---- V152-V154. GX10-managed keys: desired-state ownership, immutability, lease expiry ----
+{
+  const manual = K.upsert([], { name: 'Resend', key: 'manual-key' }, 1).list;
+  const snapshot = [{ sourceId: 'key_github', name: 'GitHub', envVar: 'GITHUB_API_KEY', key: 'gh-secret', revision: 2 }];
+  const added = K.reconcileManaged(manual, snapshot, 1000, { leaseMs: 90000 });
+  A.ok(!added.error, 'valid managed snapshot reconciles');
+  A.eq(added.managed.length, 1, 'one managed key added');
+  A.eq(added.managed[0].autonomous, false, 'managed key never gets unattended authority');
+  A.eq(added.managed[0].expiresAt, 91000, 'managed lease is bounded to 90 seconds');
+  const pub = K.toPublic(added.managed[0], { now: 1000 });
+  A.eq(pub.managed, true, 'public metadata labels GX10 ownership');
+  A.eq(pub.managedStatus, 'active', 'public metadata reports active lease');
+  A.ok(!('sourceId' in pub) && JSON.stringify(pub).indexOf('key_github') < 0, 'public metadata hides source identity');
+  A.ok(K.setEnabled(added.list, added.managed[0].id, false).error, 'normal toggle cannot mutate managed key');
+  A.ok(K.setAutonomous(added.list, added.managed[0].id, true).error, 'normal autonomy cannot mutate managed key');
+  A.ok(K.remove(added.list, added.managed[0].id).error, 'normal removal cannot mutate managed key');
+
+  const host = {};
+  K.applyEnv(added.list, host, {}, { now: 1000 });
+  A.eq(host.GITHUB_API_KEY, 'gh-secret', 'active managed key enters watched runtime');
+  A.eq(K.resolveForRequest(added.list, 'GITHUB_API_KEY', 'interactive', { now: 91000 }).reason, 'unknown', 'expired managed key cannot resolve');
+  const expiredEnv = K.runEnv(added.list, host, { surface: 'interactive', now: 91000 });
+  A.ok(!('GITHUB_API_KEY' in expiredEnv), 'expired managed key cannot enter shell child');
+  A.eq(expiredEnv.RESEND_API_KEY, 'manual-key', 'lease expiry does not disable manual key');
+  const expiredPrompt = K.promptBlock(added.list, { now: 91000 });
+  A.ok(expiredPrompt.indexOf('GITHUB_API_KEY') < 0, 'expired managed key is not advertised to model');
+  A.ok(expiredPrompt.indexOf('RESEND_API_KEY') >= 0, 'manual key remains advertised');
+
+  const rotated = K.reconcileManaged(added.list, [{ sourceId: 'key_github', name: 'GitHub', envVar: 'GITHUB_API_KEY', key: 'gh-rotated', revision: 3 }], 5000, {});
+  A.eq(rotated.managed[0].key, 'gh-rotated', 'rotation replaces exact managed value');
+  A.eq(rotated.managed[0].id, added.managed[0].id, 'rotation preserves opaque managed identity');
+  const removed = K.reconcileManaged(rotated.list, [], 6000, {});
+  A.eq(removed.list.length, 1, 'empty desired snapshot removes only managed rows');
+  A.eq(removed.list[0].name, 'Resend', 'manual row survives managed removal');
+
+  const collision = K.reconcileManaged(manual, [{ sourceId: 'key_other', name: 'Managed Resend', envVar: 'RESEND_API_KEY', key: 'managed-key', revision: 1 }], 1, {});
+  A.eq(collision.managed, [], 'manual env collision withholds managed key');
+  A.eq(collision.errors[0].code, 'manual_collision', 'collision returns sanitized code');
+  A.eq(collision.list[0].key, 'manual-key', 'collision preserves manual value');
+}
+
 // ---- a MODEL-PROVIDER key name never resolves for an outbound request, and says why (2026-09-28) ----
 {
   const reserved = { reservedEnv: new Set(['OPENROUTER_API_KEY', 'OPENROUTER_KEY']) };
