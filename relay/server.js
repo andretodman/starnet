@@ -122,7 +122,7 @@ function makeRelay(opts) {
         'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
         // the page may talk only to this relay; no third-party script, frame or connection
         'Content-Security-Policy': "default-src 'self'; connect-src 'self' wss: ws:; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-        'Permissions-Policy': 'camera=(self), microphone=(), geolocation=()'
+        'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()'
       });
       res.end(buf);
     }

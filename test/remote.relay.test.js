@@ -72,7 +72,9 @@ function wsClose(url) {
       const appRelay = makeRelay({ appDir: path.join(__dirname, '..', 'relay', 'app'), log: () => {} });
       const appPort = await appRelay.listen(0, '127.0.0.1');
       const abase = 'http://127.0.0.1:' + appPort;
-      A.eq((await fetch(abase + '/')).status, 200, 'the phone app is served');
+      const appResponse = await fetch(abase + '/');
+      A.eq(appResponse.status, 200, 'the phone app is served');
+      A.eq(appResponse.headers.get('permissions-policy'), 'camera=(self), microphone=(self), geolocation=()', 'microphone remains same-origin and user-consent gated');
       const r1 = await fetch(abase + '/%00');
       A.eq(r1.status, 400, 'a path with a NUL byte is refused, not crashed on');
       const r2 = await fetch(abase + '/' + 'a'.repeat(400));
