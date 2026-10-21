@@ -3252,9 +3252,17 @@ const Chat = (() => {
   function fileBlobUrl(title, agentId) {
     const url = fileUrl(title, agentId);
     return fetch(url, { cache: 'no-store' }).then(r => {
-      if (!r.ok) throw new Error('file HTTP ' + r.status);
+      if (!r.ok) { const e = new Error('file HTTP ' + r.status); e.status = r.status; throw e; }
       return r.blob();
     }).then(b => URL.createObjectURL(b));
+  }
+  function imageLoadFailureMessage(error) {
+    const status = Number(error && error.status) || 0;
+    if (status === 401) return 'could not load that image — the Pubfuse session expired; reconnect from App Factory';
+    if (status === 403) return 'could not load that image — this workspace image path is not allowed';
+    if (status === 404) return 'could not load that image — the generated file is missing';
+    if (status === 502 || status === 503) return 'could not load that image — Pubfuse could not complete the image transfer';
+    return 'could not load that image' + (status ? ' — HTTP ' + status : ' — the image service is unavailable');
   }
   // Wire an anchor to OPEN a workspace file. The href IS the real jailed /api/file URL (query-token
   // auth — apiauth's documented native-load escape hatch, since a link navigation cannot attach the
@@ -3364,9 +3372,9 @@ const Chat = (() => {
       img.addEventListener('load', () => fig.classList.remove('loading'), { once: true });
       img.addEventListener('error', () => { if (lightbox === mine) closeLightbox(); }, { once: true });
       img.src = u;
-    }).catch(() => {
+    }).catch(error => {
       if (lightbox === mine) closeLightbox();
-      if (typeof StationUI !== 'undefined' && StationUI.notify) StationUI.notify('could not load that image — the sidecar may be unreachable', 'warn');
+      if (typeof StationUI !== 'undefined' && StationUI.notify) StationUI.notify(imageLoadFailureMessage(error), 'warn');
     });
   }
   // wire an image thumb in the transcript: click enlarges via the jailed /api/file route (fresh blob each
@@ -11663,7 +11671,7 @@ const Chat = (() => {
   // only" gate maybeStandaloneRate uses — so a pure-chat run is never bottle-offered. Used by App.runBottleInfo (R5).
   function runDidWork(id) { const w = id ? runWork.get(id) : null; return !!(w && ((w.toolsOk || 0) >= 1 || (w.delivered || 0) >= 1)); }
 
-  return { init, load, paintTitle, deliverTurns, send, consentInspect, appendConsentDetails, revealHistory, revealAsk, copyText, continuityDiagnostics, refreshStarters, sendOrQueue, continueConnectorTask, stopActive, status, localLine, broadcast, renderProse, toolRailOf, openFile, answerConsent, consentPhrase: actionPhrase, reconcileBackgroundAsks, setSystem, getHistory, contextRef, abort, isBusy, beatBusy: skillBeatBusy, beginInterview, endInterview, echoUser, prefill, autoGrowInput, choices, clearChoices, retireDeskPrompt, typeLine, nudge, clearNudge, offerCuriosity, offerFork, planGoalPath, briefingReceipt, isComposerEngaged, canFocusSession, runMeta, runDidWork, awayDigest, awayReview, awayRate, sampleCard, workshopReturn, refreshIdBar: renderIdBar, refreshGroupControls: updateControls, refreshAgentIdentity, setRosterStatus, askBudgetSpent, spendAsk, clockLabel: fmtClock, breakLabel: fmtBreak, workspaceFileRefs, imageBlobUrl, readableUrl,
+  return { init, load, paintTitle, deliverTurns, send, consentInspect, appendConsentDetails, revealHistory, revealAsk, copyText, continuityDiagnostics, refreshStarters, sendOrQueue, continueConnectorTask, stopActive, status, localLine, broadcast, renderProse, toolRailOf, openFile, answerConsent, consentPhrase: actionPhrase, reconcileBackgroundAsks, setSystem, getHistory, contextRef, abort, isBusy, beatBusy: skillBeatBusy, beginInterview, endInterview, echoUser, prefill, autoGrowInput, choices, clearChoices, retireDeskPrompt, typeLine, nudge, clearNudge, offerCuriosity, offerFork, planGoalPath, briefingReceipt, isComposerEngaged, canFocusSession, runMeta, runDidWork, awayDigest, awayReview, awayRate, sampleCard, workshopReturn, refreshIdBar: renderIdBar, refreshGroupControls: updateControls, refreshAgentIdentity, setRosterStatus, askBudgetSpent, spendAsk, clockLabel: fmtClock, breakLabel: fmtBreak, workspaceFileRefs, imageBlobUrl, readableUrl, imageLoadFailureMessage,
     // the COMMS '▤ saved' row's folder / copy-path keys and their path resolver, shared with MY WORK › DELIVERABLES' FILES rows (org pass 10-14, P24)
     folderButton, copyPathButton, fullSavedPath: absoluteArtifactPath };
 })();
