@@ -46,6 +46,21 @@ function entries(server, n, bytes) {
   A.ok(line.indexOf('github (40 tools)') >= 0 && line.indexOf('tool_search') >= 0, 'the index line names the server, its count, and the way in');
   A.ok(line.indexOf('mcp__github__t00') < 0, 'the index does not re-list every tool name');
   A.eq(connectorIndexLine([]), '', 'no deferred server = no new prompt bytes');
+
+  // An enrolled workflow may name the exact tools it already has. This only changes the footprint,
+  // never the grant: names absent from the authority-filtered entries cannot materialize a tool.
+  const pinned = planConnectorDeferral(entries('big', 40, 600), {
+    maxBytes: 8192, maxTools: 12, preloadTools: ['mcp__big__t17', 'mcp__missing__edit']
+  });
+  A.eq(pinned.deferred.length, 39, 'preloading one existing connector tool leaves only its 39 siblings deferred');
+  A.ok(!pinned.deferred.includes('mcp__big__t17'), 'the exact enrolled tool is advertised upfront');
+  A.eq(pinned.servers, [{ id: 'big', count: 39, bytes: 23400 }], 'the index counts only tools still deferred');
+  A.eq(pinned.totalTools, 40, 'an unknown preload cannot add to the real grant');
+  const allPinned = entries('enrolled', 16, 600);
+  A.eq(planConnectorDeferral(allPinned, { maxTools: 12, preloadTools: allPinned.map(t => t.name) }).deferred,
+    [], 'bounded explicit workflow tools remain visible even when they exceed the generic footprint limit');
+  A.eq(planConnectorDeferral(entries('big', 40, 600), { maxBytes: 8192, maxTools: 12, preloadTools: [] }),
+    planConnectorDeferral(entries('big', 40, 600), { maxBytes: 8192, maxTools: 12 }), 'empty preload is byte-identical to the default');
 }
 
 // ---- B. the live seam ----
@@ -119,7 +134,8 @@ function mockModel() {
     const user = msgs.filter(m => m.role === 'user').map(m => String(m.content || '')).join('\n');
     const results = msgs.filter(m => m.role === 'tool').length;
     const names = (body.tools || []).map(t => t.function && t.function.name);
-    if (user.indexOf('SCENARIO:reveal') >= 0 && results === 0) toolCall(res, 'c_search', 'tool_search', { query: 'widget_17' });
+    if (user.indexOf('SCENARIO:preloaded') >= 0 && results === 0 && names.includes('mcp__big__widget_17')) toolCall(res, 'c_preloaded', 'mcp__big__widget_17', { id: 'preloaded' });
+    else if (user.indexOf('SCENARIO:reveal') >= 0 && results === 0) toolCall(res, 'c_search', 'tool_search', { query: 'widget_17' });
     else if (user.indexOf('SCENARIO:reveal') >= 0 && results === 1 && names.indexOf('mcp__big__widget_17') >= 0) toolCall(res, 'c_widget', 'mcp__big__widget_17', { id: 'w17' });
     else say(res, 'done');
     res.write('data: [DONE]\n\n');
@@ -152,15 +168,33 @@ const toolNames = body => (body.tools || []).map(t => t.function.name);
   const fixture = SidecarFixture.create({ prefix: 'starnet-connector-defer-', timeoutMs: 20000, env: cleanEnv() });
   // No streamId: an explicit stream would be seeded from its durable transcript on the second pass and the two
   // "identical" requests would differ by history rather than by footprint.
-  async function run(scenario) {
+  async function run(scenario, extra = {}, denyConsent = false) {
     llm.bodies.length = 0;
     const r = await fixture.request('/api/run', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: 'custom', baseUrl: llm.base, key: 'fixture-key', model: 'fixture-model', agentId: 'agent', isTask: true,
-        placed: [], system: MARK + ': connector footprint probe.', messages: [{ role: 'user', content: 'SCENARIO:' + scenario + ' please proceed.' }] })
+        placed: [], system: MARK + ': connector footprint probe.', messages: [{ role: 'user', content: 'SCENARIO:' + scenario + ' please proceed.' }], ...extra })
     });
     A.eq(r.status, 200, scenario + ': run accepted');
-    const events = (await r.text()).trim().split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (_) { return {}; } });
+    const events = [];
+    let pending = '', runId = '';
+    for await (const chunk of r.body) {
+      pending += Buffer.from(chunk).toString('utf8');
+      let end;
+      while ((end = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, end); pending = pending.slice(end + 1);
+        if (!line.trim()) continue;
+        let event; try { event = JSON.parse(line); } catch (_) { continue; }
+        events.push(event);
+        if (event.name === 'agent.run.start') runId = (event.payload || {}).runId || runId;
+        if (denyConsent && event.name === 'permission.prompt') {
+          const p = event.payload || {};
+          const answer = await fixture.json('POST', '/api/consent', { runId: p.runId || runId, promptId: p.promptId, decision: 'deny' });
+          A.eq(answer.status, 200, 'preloaded connector still asks for consent and the denial is acknowledged');
+          A.eq(answer.body.ok, true, 'denial settles the exact owned consent prompt');
+        }
+      }
+    }
     const end = events.filter(e => e.name === 'agent.run.end').pop();
     return { events, reason: end && end.payload && end.payload.reason, bodies: llm.bodies.slice() };
   }
@@ -201,6 +235,44 @@ const toolNames = body => (body.tools || []).map(t => t.function.name);
     const searchResult = (t2.messages || []).filter(m => m.role === 'tool').map(m => String(m.content)).join('\n');
     A.ok(searchResult.indexOf('mcp__big__widget_17') >= 0, 'the tool_search result names the connector tool');
     A.eq(mcp.calls.filter(c => c.server === 'big' && c.name === 'widget_17').length, 1, 'the revealed connector tool really reached the MCP server (tools/call widget_17)');
+
+    const preload = await run('preloaded', { preloadTools: ['mcp__big__widget_17'] });
+    A.ok(toolNames(preload.bodies[0]).includes('mcp__big__widget_17'), 'workflow tool schema is present on the FIRST provider request, with no search');
+    A.eq(toolNames(preload.bodies[0]).filter(n => n.startsWith('mcp__big__')), ['mcp__big__widget_17'], 'preload does not reveal siblings');
+    A.ok(systemOf(preload.bodies[0]).includes('big (39 tools)'), 'first request indexes the 39 still-deferred sibling tools');
+    A.eq(mcp.calls.filter(c => c.args && c.args.id === 'preloaded').length, 1, 'first-turn preloaded tool actually reaches its existing MCP endpoint');
+    A.ok(!preload.events.some(e => e.name === 'agent.tool_call' && /tool[._]search/.test(e.payload.tool || e.payload.name || '')), 'no search was needed for an enrolled workflow tool');
+    const preloadedRunId = preload.events.find(e => e.name === 'agent.run.start').payload.runId;
+    const storedPreload = await fixture.json('GET', '/api/runs?runId=' + encodeURIComponent(preloadedRunId));
+    A.eq(storedPreload.body.runs[0].taintedBy, 'mcp__big__widget_17', 'preloaded MCP output retains the normal external-content taint latch');
+
+    const absent = await run('plain', { preloadTools: ['mcp__missing__edit', 'mcp__big__unknown'] });
+    A.eq(toolNames(absent.bodies[0]).filter(n => n.startsWith('mcp__big__') || n.startsWith('mcp__missing__')), [], 'unregistered tool/server names cannot become advertised or confer capability');
+    for (const invalid of [null, 'mcp__big__widget_17', ['shell_exec'], ['mcp__big__*'], ['mcp__big__widget_17', 'mcp__big__widget_17'],
+      Array.from({ length: 17 }, (_, i) => 'mcp__big__widget_' + i), ['mcp__big__' + 'a'.repeat(65)]]) {
+      const before = llm.bodies.length;
+      const response = await fixture.json('POST', '/api/run', { provider: 'custom', baseUrl: llm.base, key: 'fixture-key', model: 'fixture-model',
+        isTask: true, system: MARK, preloadTools: invalid, messages: [{ role: 'user', content: 'SCENARIO:plain' }] });
+      A.eq(response.status, 400, 'invalid/duplicate/oversized/non-MCP preload rejected before starting a run');
+      A.eq(llm.bodies.length, before, 'rejected preload makes no provider request');
+    }
+
+    // Full access is only for the preceding dispatch smoke. The preload itself must never bypass consent.
+    await fixture.restart({ SKYNET_FULL_ACCESS: '0', STARNET_FULL_ACCESS: '0' });
+    A.ok(await connectorsUp(['big', 'small']), 'connectors return for normal-approval preload test');
+    const beforeDenied = mcp.calls.length;
+    const denied = await run('preloaded', { preloadTools: ['mcp__big__widget_17'], internal: true }, true);
+    A.ok(toolNames(denied.bodies[0]).includes('mcp__big__widget_17'), 'authorized tool remains visible under normal approval posture');
+    A.ok(denied.events.some(e => e.name === 'permission.prompt'), 'preload has not preapproved the MCP effect');
+    A.eq(mcp.calls.length, beforeDenied, 'denied preloaded tool never reaches the MCP server');
+
+    const disabled = await fixture.json('POST', '/api/connectors', { id: 'big', label: 'big', transport: 'http', url: mcp.base + '/big', enabled: false });
+    A.eq(disabled.status, 200, 'connector disabled by its normal host control');
+    const revoked = await run('plain', { preloadTools: ['mcp__big__widget_17'] });
+    A.ok(!toolNames(revoked.bodies[0]).includes('mcp__big__widget_17'), 'preload cannot restore a disabled connector');
+    // Return to the original smoke posture so the byte-identity comparison below is meaningful.
+    await fixture.restart({ SKYNET_FULL_ACCESS: '1', STARNET_FULL_ACCESS: '1' });
+    A.ok(await connectorsUp(['small']), 'small connector ready after approval-posture smoke');
 
     // Only the small server: below both thresholds -> nothing deferred, no index line.
     const rm = await fixture.json('POST', '/api/connectors/remove', { id: 'big' });

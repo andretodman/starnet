@@ -91,7 +91,7 @@ const docExtract = require('./tools/builtin/docextract.js').makeDocExtract({ inf
 const imageWire = require('./tools/builtin/imagewire.js').makeImageWire({});
 const { makeNotebookTools, reviseRecord } = require('./tools/builtin/notebook.js');
 const { makeRecallTool } = require('./tools/builtin/recall.js');
-const { makeToolSearchTool, planConnectorDeferral, connectorIndexLine } = require('./tools/builtin/toolsearch.js');   // tool.search: reach a granted-but-unadvertised (deferred) tool
+const { makeToolSearchTool, planConnectorDeferral, connectorIndexLine, connectorPreloadNames } = require('./tools/builtin/toolsearch.js');   // tool.search: reach a granted-but-unadvertised (deferred) tool
 const { unavailableTools, unavailableLine } = require('./capability/effective-toolsets.js');
 const { withheldCommandTools } = require('./capability/withheld.js');   // issue #77: why a placed command tool is withheld this run, and what works   // certain-unavailability signals -> deferred with the fix named
 const CodeMode = require('./tools/builtin/code.js');                      // code.run: bounded JS composition over this run's read-only grants
@@ -19205,6 +19205,12 @@ async function handleRun(req, res) {
   try { body = JSON.parse(await readBody(req, 2 << 20, res)); }
   catch (e) { if (res.headersSent) return; res.writeHead(400); return res.end('bad json'); }   // over-limit already answered 413
   const { model, system, messages = [], agentId = 'agent', isTask = false, provider, fallbackModels, fallbackProviders } = body || {};
+  let preloadTools;
+  try { preloadTools = connectorPreloadNames(body && body.preloadTools); }
+  catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: e.message }));
+  }
   const recurring = !!(body && body.recurring);   // the browser's mint detector saw this task SHAPE before → salience boost for reflection
   // REASON-ONLY SELF-TALK (retitle / goal-judge / pitch / autopilot): the caller composed a complete strict-format
   // prompt and parses the raw reply. runOnce keeps that system prompt VERBATIM (no manual/capability/skill/memory
@@ -19562,6 +19568,7 @@ async function handleRun(req, res) {
       // the work as unscoped rather than asserting a folder relationship the grant layer can't back.
       projectRoot: projectBlessed ? projectRootRaw : '',
       preloadSkills,
+      preloadTools,    // advertising only: the planner intersects these with already-authorized MCP tools
       extraObjects,    // a placed WORKBENCH -> shell.exec + verify.run, additive on the default office
       stationObjects,  // Class Loadouts (shared-gear): station-wide gear for SKILL availability (tools stay room-scoped)
       /* MEMORY FORMS ON EVERY REAL RUN. This flag used to be set HERE ALONE, with the rationale "only the WATCHED
@@ -21169,7 +21176,7 @@ async function runOnceCore(o) {
           if (cap.indexOf('mcp:') !== 0) continue;
           entries.push({ name, server: cap.slice(4), bytes: JSON.stringify(registry.wireFormat([t])[0]).length });
         }
-        if (entries.length) connectorDeferral = planConnectorDeferral(entries, { maxBytes: CONNECTOR_DEFER.bytes, maxTools: CONNECTOR_DEFER.tools });
+        if (entries.length) connectorDeferral = planConnectorDeferral(entries, { maxBytes: CONNECTOR_DEFER.bytes, maxTools: CONNECTOR_DEFER.tools, preloadTools: o.preloadTools });
       } catch (e) { failNote('tools.connector-deferral', e); connectorDeferral = { deferred: [], servers: [] }; }
       // Spotify's only certain fact is "no token at all" — getAccessToken() then throws before any network. A token
       // that might refresh is NOT certain, and an unreadable store is unknown (undefined), so both stay advertised.

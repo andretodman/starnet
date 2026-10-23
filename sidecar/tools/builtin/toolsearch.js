@@ -28,6 +28,7 @@
   'use strict';
 
   const MAX_HITS = 8;          // a reveal is cheap, but 20 at once re-inflates the very request we shrank
+  const MAX_PRELOADS = 16;     // an enrolled workflow's exact connector tools, not a global deferral switch
   const STOP = new Set(['a', 'an', 'the', 'to', 'of', 'for', 'and', 'or', 'in', 'on', 'with', 'how', 'do', 'i',
     'my', 'is', 'it', 'that', 'this', 'can', 'use', 'used', 'get', 'tool', 'tools']);
 
@@ -147,11 +148,26 @@
     return one.length > 160 ? one.slice(0, 157) + '…' : one;
   }
 
+  /* A host-selected workflow can advertise a bounded set of exact MCP wire names from its FIRST turn.
+     Validate at admission, before any provider/tool effects. This is NOT a grant: the planner below only
+     intersects these names with entries the caller already resolved through normal authority/toolset gates.
+     No wildcard, built-in tool, coercion or silent truncation; default callers stay byte-identical. */
+  function connectorPreloadNames(value) {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > MAX_PRELOADS || value.some(n =>
+      typeof n !== 'string' || n.length > 64 || !/^mcp__[A-Za-z0-9_-]+$/.test(n)) || new Set(value).size !== value.length) {
+      throw new Error('preloadTools must be at most 16 unique exact MCP tool names (maximum 64 characters each)');
+    }
+    return value.slice();
+  }
+
   /* CONNECTOR DEFERRAL PLAN (w2 footprint, 2026-09-22). An MCP connector's tools used to ride EVERY request in
      full: a big server (40 tools of JSON schema) cost more per turn than the whole CAP_REGISTRY browser shelf
      this file was built to defer. Past a footprint threshold the LARGEST servers are deferred whole — a server
      is one line in the prompt index, so it is all-or-nothing — until what is still advertised fits. Small
-     servers stay advertised: below the threshold nothing changes at all.
+     servers stay advertised: below the threshold nothing changes at all. An optional, explicit preloadTools
+     keeps ONLY those existing entries advertised. Their siblings remain eligible for size deferral; server
+     index counts and bytes describe the still-deferred subset, never the whole partially preloaded server.
 
        planConnectorDeferral([{ name, server, bytes }], { maxBytes, maxTools })
          -> { deferred: [name], servers: [{ id, count, bytes }], totalBytes, totalTools }
@@ -163,16 +179,18 @@
     opts = opts || {};
     const maxBytes = Number(opts.maxBytes) > 0 ? Number(opts.maxBytes) : 0;
     const maxTools = Number(opts.maxTools) > 0 ? Number(opts.maxTools) : 0;
+    const preloaded = new Set(connectorPreloadNames(opts.preloadTools));
     const groups = new Map();
     let bytes = 0, tools = 0;
     for (const e of (entries || [])) {
       if (!e || !e.name) continue;
       const id = String(e.server || 'mcp');
+      const b = Number(e.bytes) > 0 ? Number(e.bytes) : 0;
+      tools++; bytes += b;
+      if (preloaded.has(e.name)) continue;
       if (!groups.has(id)) groups.set(id, { id, count: 0, bytes: 0, names: [] });
       const g = groups.get(id);
-      const b = Number(e.bytes) > 0 ? Number(e.bytes) : 0;
       g.count++; g.bytes += b; g.names.push(String(e.name));
-      tools++; bytes += b;
     }
     const plan = { deferred: [], servers: [], totalBytes: bytes, totalTools: tools };
     const over = () => (maxBytes > 0 && bytes > maxBytes) || (maxTools > 0 && tools > maxTools);
@@ -354,5 +372,5 @@
     };
   }
 
-  return { makeToolSearchTool, planConnectorDeferral, connectorIndexLine };
+  return { makeToolSearchTool, planConnectorDeferral, connectorIndexLine, connectorPreloadNames };
 });
