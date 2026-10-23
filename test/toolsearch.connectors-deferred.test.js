@@ -246,6 +246,43 @@ const toolNames = body => (body.tools || []).map(t => t.function.name);
     const storedPreload = await fixture.json('GET', '/api/runs?runId=' + encodeURIComponent(preloadedRunId));
     A.eq(storedPreload.body.runs[0].taintedBy, 'mcp__big__widget_17', 'preloaded MCP output retains the normal external-content taint latch');
 
+    // An assigned repository specialist is not the lead. The authenticated caller can only narrow
+    // the existing lead projection; ordinary browser calls retain the exact default prompt/tools.
+    const defaultLead = await run('plain');
+    const explicitLead = await run('plain', { lead: true });
+    const defaultBody = defaultLead.bodies[0], explicitBody = explicitLead.bodies[0];
+    A.ok(systemOf(defaultBody).includes('[ORCHESTRATION]'), 'omitted lead keeps the existing orchestration prompt');
+    A.eq(systemOf(explicitBody), systemOf(defaultBody), 'explicit lead:true preserves the default system bytes');
+    A.eq(explicitBody.tools, defaultBody.tools, 'explicit lead:true preserves the default tool schemas');
+    const specialist = await run('plain', { lead: false });
+    const specialistBody = specialist.bodies[0], specialistSystem = systemOf(specialistBody);
+    A.ok(!specialistSystem.includes('[ORCHESTRATION]'), 'lead:false has no contradictory lead orchestration block on the provider wire');
+    A.ok(!specialistSystem.includes('YOUR TEAM — DELEGATE'), 'lead:false is not told to delegate its assigned work');
+    A.ok(specialistSystem.startsWith(MARK + ': connector footprint probe.'), 'specialist retains the caller system prefix');
+    A.ok(specialistSystem.includes('<starnet_operator_manual>'), 'specialist keeps the normal operator manual');
+    A.ok(specialistSystem.includes('## INSTALLED SKILLS'), 'specialist keeps enabled skills');
+    A.ok(toolNames(specialistBody).every(n => toolNames(defaultBody).includes(n)), 'specialist cannot gain a tool absent from the default lead projection');
+    A.ok(!toolNames(specialistBody).some(n => /^team_(dispatch|spawn|summon)$/.test(n)), 'specialist loses automatic team delegation schemas');
+    A.ok(toolNames(specialistBody).includes('mcp__small__note_list'), 'specialist retains already-configured connector tools');
+    const briefSpecialist = await run('plain', { lead: false, streamId: 'specialist_brief_probe' });
+    A.ok(systemOf(briefSpecialist.bodies[0]).includes('TASK CONTEXT — LISTEN BEFORE YOU BUILD'),
+      'specialist keeps Task Brief doctrine when its run has a workstream');
+    A.ok(toolNames(briefSpecialist.bodies[0]).includes('brief_proceed'), 'specialist still has the normal Task Brief protocol');
+    const specialistPreload = await run('preloaded', { lead: false, preloadTools: ['mcp__big__widget_17'] });
+    const specialistRunId = specialistPreload.events.find(e => e.name === 'agent.run.start').payload.runId;
+    const storedSpecialist = await fixture.json('GET', '/api/runs?runId=' + encodeURIComponent(specialistRunId));
+    A.eq(storedSpecialist.body.runs[0].taintedBy, 'mcp__big__widget_17', 'specialist connector result still latches external-content taint');
+    const runsBeforeInvalidLead = (await fixture.json('GET', '/api/runs')).body.runs.map(r => r.runId);
+    for (const invalid of [null, 'false', 0, 1, [], {}]) {
+      const before = llm.bodies.length;
+      const response = await fixture.json('POST', '/api/run', { provider: 'custom', baseUrl: llm.base, key: 'fixture-key', model: 'fixture-model',
+        isTask: true, system: MARK, lead: invalid, messages: [{ role: 'user', content: 'SCENARIO:plain' }] });
+      A.eq(response.status, 400, 'non-boolean lead is rejected before run admission');
+      A.eq(llm.bodies.length, before, 'invalid lead makes no provider request');
+    }
+    A.eq((await fixture.json('GET', '/api/runs')).body.runs.map(r => r.runId), runsBeforeInvalidLead,
+      'invalid lead creates no durable run records');
+
     const absent = await run('plain', { preloadTools: ['mcp__missing__edit', 'mcp__big__unknown'] });
     A.eq(toolNames(absent.bodies[0]).filter(n => n.startsWith('mcp__big__') || n.startsWith('mcp__missing__')), [], 'unregistered tool/server names cannot become advertised or confer capability');
     for (const invalid of [null, 'mcp__big__widget_17', ['shell_exec'], ['mcp__big__*'], ['mcp__big__widget_17', 'mcp__big__widget_17'],
@@ -265,6 +302,9 @@ const toolNames = body => (body.tools || []).map(t => t.function.name);
     A.ok(toolNames(denied.bodies[0]).includes('mcp__big__widget_17'), 'authorized tool remains visible under normal approval posture');
     A.ok(denied.events.some(e => e.name === 'permission.prompt'), 'preload has not preapproved the MCP effect');
     A.eq(mcp.calls.length, beforeDenied, 'denied preloaded tool never reaches the MCP server');
+    const deniedSpecialist = await run('preloaded', { preloadTools: ['mcp__big__widget_17'], internal: true, lead: false }, true);
+    A.ok(deniedSpecialist.events.some(e => e.name === 'permission.prompt'), 'specialist still asks for normal connector consent');
+    A.eq(mcp.calls.length, beforeDenied, 'specialist cannot bypass a denied connector call');
 
     const disabled = await fixture.json('POST', '/api/connectors', { id: 'big', label: 'big', transport: 'http', url: mcp.base + '/big', enabled: false });
     A.eq(disabled.status, 200, 'connector disabled by its normal host control');

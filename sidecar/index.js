@@ -19205,6 +19205,14 @@ async function handleRun(req, res) {
   try { body = JSON.parse(await readBody(req, 2 << 20, res)); }
   catch (e) { if (res.headersSent) return; res.writeHead(400); return res.end('bad json'); }   // over-limit already answered 413
   const { model, system, messages = [], agentId = 'agent', isTask = false, provider, fallbackModels, fallbackProviders } = body || {};
+  // An already-assigned specialist may decline the browser's automatic lead role. This only narrows
+  // the existing projection: consent, taint, placed tools and Task Brief still use their normal gates.
+  // Validate before admission, reviews, learning or any provider call; omitted preserves browser behavior.
+  if (body && Object.prototype.hasOwnProperty.call(body, 'lead') && typeof body.lead !== 'boolean') {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'lead must be a boolean' }));
+  }
+  const lead = !(body && body.lead === false);
   let preloadTools;
   try { preloadTools = connectorPreloadNames(body && body.preloadTools); }
   catch (e) {
@@ -19586,8 +19594,8 @@ async function handleRun(req, res) {
       reflect: true,
       recovery,
       recurring,      // salience signal: did the mint detector see this task shape before? (decision 3)
-      lead: true      // Stage 2: ONLY the browser-commanded run is a lead — it alone gets the orchestrator object
-                      // (delegate tool). A delegated worker runs via team.dispatch with lead falsy -> cannot re-delegate.
+      lead            // Browser default remains lead; an explicit false uses the existing non-lead projection.
+                      // Delegated workers still enter via team.dispatch with lead falsy.
     });
     if (recovery) settleRunRecoveryContinuation(recovery, runId, (continuedResult && continuedResult.reason) || 'error');
   } catch (e) {
