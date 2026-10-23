@@ -295,6 +295,7 @@ const { sameEndpoint, resolveConnectorOauthTarget, catalogSignInAvailable, signe
 const connectorStateMod = require('./connectorstate.js');   // one transactional envelope for connector config + OAuth secrets
 const cron = require('./cron.js');                         // pure schedule math (parse/nextFire/planTick)
 const cronStore = require('./cron-store.js');              // pure CronJob lifecycle reducer
+const { makeRoutineFileScopes } = require('./routine-file-scope.js');
 const { makeRoutineToolsets } = require('./routine-toolsets.js');   // A3: the ONE enabledToolsets reader (create/update + load-time repair)
 const mintLedger = require('./mint-ledger.js');            // W6: pure dedup gate + per-agent mint ledger (never re-create what exists)
 const cronDriverMod = require('./cron-driver.js');
@@ -4285,7 +4286,13 @@ const apps = makeApps({
       try { schedule = parseCronScheduleOr400(p.schedule, Date.now(), (cur.schedule && cur.schedule.tz) || undefined); } catch (e) { return { ok: false, error: e.message }; }
       // GRANTS BIND TO THE APPROVED INSTRUCTION (routine.manage does the same): a crew app.schedule that rewrites a granted
       // routine's task drops its unattended workbench/connector grants — the Commander re-grants from SCHEDULES (QA 2026-10-02)
-      try { await withCronWrite((jobs) => { const patch = { schedule, prompt: p.prompt, name: p.name }; if (p.byAgent && cronStore.grantsRevokedByAgentEdit(cronStore.getJob(jobs, id), patch).length) patch.unattendedGrants = []; return cronStore.updateJob(jobs, id, patch, { now: Date.now(), defaultTz: CRON_HOST_TZ }); }); }
+      try { await withCronWrite((jobs) => {
+        const current = cronStore.getJob(jobs, id), patch = { schedule, prompt: p.prompt, name: p.name };
+        const revoked = p.byAgent ? cronStore.grantsRevokedByAgentEdit(current, patch) : [];
+        if (revoked.length) patch.unattendedGrants = [];
+        if (revoked.includes('files')) patch.fileScope = { ...current.fileScope, revoked: true };
+        return cronStore.updateJob(jobs, id, patch, { now: Date.now(), defaultTz: CRON_HOST_TZ });
+      }); }
       catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
       return { ok: true, job: cronStore.getJob(cronJobs, id) };
     },
@@ -5291,6 +5298,8 @@ function cronCanonicalWorkdir(raw) {
   if (!isBlessedRoot(abs)) throw new Error('routine workdir must be a currently approved project folder');
   return abs;
 }
+const routineFileScopes = makeRoutineFileScopes({ fs, pathMod: path, canonicalWorkdir: cronCanonicalWorkdir,
+  protectedPath: pathTrustCore._internals.hardlineReason });
 function cronScriptSpec(job) {
   if (!job || !job.script) return null;
   if (!Array.isArray(job.unattendedGrants) || job.unattendedGrants.indexOf('workbench') < 0) throw new Error('routine scripts require the unattended workbench grant');
@@ -15839,7 +15848,7 @@ function handleCronCreate(req, res) {
   const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   readBody(req, 1 << 16).then(async raw => {
     let body; try { body = JSON.parse(raw) || {}; } catch (e) { return json(400, { error: 'bad json' }); }
-    const out = await createCronJobFromSpec(body);
+    const out = await createCronJobFromSpec(body, { hostFileScope: true });
     /* ARM ON CREATE (routine reliability, 2026-10-01): the panel used to save a routine and then toast "saved, but
        the scheduler is off — this won't run" — a routine the Commander just made never firing is the most common
        way a routine "doesn't work". body.arm:true (sent by the CREATE form, same default as routine.create's
@@ -15860,7 +15869,7 @@ function handleCronCreate(req, res) {
 /* createCronJobFromSpec(body) — the CREATE path, extracted so POST /api/cron and the /routine slash action mint
    routines through the identical validation, mint gate and locked write. Returns { status, body } shaped exactly
    like the HTTP response the route used to build inline. Never throws. */
-async function createCronJobFromSpec(body) {
+async function createCronJobFromSpec(body, authority) {
   body = body || {};
   const out = (status, obj) => ({ status: status, body: obj });
   const takeoverId = body.meta && body.meta.workflowTakeoverId;
@@ -15895,6 +15904,7 @@ async function createCronJobFromSpec(body) {
     for (const ref of body.contextFrom) if (!cronStore.getJob(cronJobs, ref)) throw new Error('unknown upstream routine ' + ref);
     body.enabledToolsets = cronToolsetList(body.enabledToolsets);
     body.workdir = cronCanonicalWorkdir(body.workdir);
+    body.fileScope = routineFileScopes.configure(body, { host: !!(authority && authority.hostFileScope) });
     body.noAgent = body.noAgent === true;
     body.attachToSession = body.attachToSession === true;
     if (body.noAgent && !body.script) throw new Error('script-only routines require a script');
@@ -15938,7 +15948,7 @@ async function createCronJobFromSpec(body) {
       // on this routine. cron-store whitelists it and inputpolicy re-filters at the gate, so an arbitrary body
       // value cannot widen a run. Absent -> [] -> the routine has no terminal, exactly as before.
       unattendedGrants: body.unattendedGrants,
-      skills: body.skills, script: body.script, scriptTimeoutMs: body.scriptTimeoutMs, workdir: body.workdir, contextFrom: body.contextFrom,
+      skills: body.skills, script: body.script, scriptTimeoutMs: body.scriptTimeoutMs, workdir: body.workdir, fileScope: body.fileScope, contextFrom: body.contextFrom,
       noAgent: body.noAgent, enabledToolsets: body.enabledToolsets, attachToSession: body.attachToSession,
       monitorMode: body.monitorMode === true,
       origin: body.origin,
@@ -16007,6 +16017,11 @@ function handleCronUpdate(req, res) {
       }
       if (Object.prototype.hasOwnProperty.call(patch, 'workdir')) patch.workdir = cronCanonicalWorkdir(patch.workdir);
       const candidate = Object.assign({}, current, patch);
+      // Only this authenticated operator route may enroll/change the exact file grant. A workdir,
+      // toolset or script edit must also remain consistent with an existing enrolled scope.
+      const pauseOnly = patch.enabled === false && Object.keys(patch).length === 1;
+      const fileScope = pauseOnly ? candidate.fileScope : routineFileScopes.configure(candidate, { host: true });
+      if (Object.prototype.hasOwnProperty.call(patch, 'fileScope')) patch.fileScope = fileScope;
       if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
       if (candidate.noAgent && !candidate.script) throw new Error('script-only routines require a script');
       if (candidate.script) cronScriptSpec(candidate);
@@ -16018,6 +16033,8 @@ function handleCronUpdate(req, res) {
       // so it cannot clobber a concurrent advance and the pause/resume sees the just-updated job.
       await withCronWrite(jobs => {
         const candidate = Object.assign({}, cronStore.getJob(jobs, id), patch);
+        // Stopping must remain possible even after project trust or the scope was revoked.
+        if (!(enabled === false && Object.keys(patch).length === 0)) routineFileScopes.configure(candidate, { host: true });
         if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
         let next = cronStore.updateJob(jobs, id, patch, { now: Date.now(), defaultTz: CRON_HOST_TZ });
         if (enabled === true) next = cronStore.resumeJob(next, id, { now: Date.now(), defaultTz: CRON_HOST_TZ });
@@ -20006,6 +20023,17 @@ async function runOnceCore(o) {
   const pathPrompt = o.pathPrompt;   // NS-5: the live "work in <root>? always/once/no" channel (browser runs only); undefined for headless/autonomous → path-trust hard-denies a new root
   const summon = o.summon;   // the live team.summon round-trip closure (browser runs only); undefined for headless/workers → tool degrades gracefully
   const trigger = o.trigger || 'directive';
+  // Only the cron host mints this identity (scheduled fire and Run Now). Bind from the durable
+  // record, not an options field a model could smuggle into a routine or delegated worker.
+  const routineFiles = surface === 'autonomous' && trigger === 'schedule' && o.cronJobId
+    ? routineFileScopes.bind({ jobId: String(o.cronJobId), agentId, workdir: o.workdir,
+      getJob: id => cronStore.getJob(cronJobs, id), tainted: () => execution.taintedBy() }) : null;
+  if (routineFiles) {
+    if (o.cronScript || o.noAgent || o.runsLine || o.projectRoot !== routineFiles.workdir) throw new Error('routine file scope: incompatible run configuration');
+    system = String(system || '') + '\nOPERATOR-ENROLLED FILE WORK: Read within ' + routineFiles.workdir
+      + '. Only these exact files may be edited: ' + JSON.stringify(routineFiles.paths)
+      + '. Use native fs tools. No shell, external tools, delegation, permission edits or writes elsewhere. Report actual file receipts; tests requiring execution remain unverified.';
+  }
   // P1 (WIRING_AUDIT slice 2): a server-initiated run (telegram/routed/manual-cron) has NO browser-local copy of its
   // lifecycle, so the station floor never lights for it. When a caller opts in via o.broadcast, ALSO mirror the
   // run-lifecycle events to the floor over SSE. Gated on the explicit flag — NOT on trigger — so the hero's
@@ -20436,7 +20464,9 @@ async function runOnceCore(o) {
      team.dispatch hands a later worker its earlier siblings' files (o.handoffReads), and grants the lead its workers'
      saved files once they return (grantReads below). Read-only, exact real paths, gone when the run ends. */
   const runReadGrants = new Set((Array.isArray(o.handoffReads) ? o.handoffReads : []).map(String).filter(Boolean).slice(0, 64));
-  const runPathTrust = (abs, o2) => pathTrustCore.guard(abs, {
+  const runPathTrust = async (abs, o2) => {
+    if (routineFiles) routineFiles.guardPath(abs, (o2 && o2.scope) || 'read');
+    const guarded = await pathTrustCore.guard(abs, {
     scope: (o2 && o2.scope) || 'read', surface: surface, prompt: pathPrompt || null,
     agentId: (o2 && o2.agentId) || agentId,
     readGrants: Array.from(runReadGrants),
@@ -20444,10 +20474,13 @@ async function runOnceCore(o) {
     userTouch: surface === 'interactive' || ownerTrusted,
     // This Computer widens the path envelope without changing approval posture: ASK still prompts before
     // mutations, while reads of non-protected host paths no longer need a second project-root card.
-    fullAccess: unrestrictedHostNow() || executionProfile.filesystemScope === 'host-paths-except-hard-floor',
-    unrestrictedHost: unrestrictedHostNow()
-  });
-  makeFsTools({ fsp, pathMod: path, root: WORKSPACES, environment: executionEnvironment, limits: { writeBytes: 1 << 20, readReturn: 24000 }, redact, pathTrust: runPathTrust, docExtract, imageWire, editDiagnostics: lspManager, spawn: childSpawn }).register(registry);   // redact: scrub secrets out of surfaced fs.search lines (§5.6); baseline-before-edit LSP feedback; spawn: lets fs.search use `rg` when the machine has it
+    fullAccess: !routineFiles && (unrestrictedHostNow() || executionProfile.filesystemScope === 'host-paths-except-hard-floor'),
+    unrestrictedHost: !routineFiles && unrestrictedHostNow()
+    });
+    // A containing blessed ancestor must not become fs.search's traversal boundary.
+    return routineFiles ? { ...guarded, base: routineFiles.workdir } : guarded;
+  };
+  makeFsTools({ fsp, pathMod: path, root: WORKSPACES, environment: executionEnvironment, limits: { writeBytes: 1 << 20, readReturn: 24000 }, redact, pathTrust: runPathTrust, noSymlinkTraversal: !!routineFiles, docExtract, imageWire, editDiagnostics: lspManager, spawn: childSpawn }).register(registry);   // redact: scrub secrets out of surfaced fs.search lines (§5.6); baseline-before-edit LSP feedback; spawn: lets fs.search use `rg` when the machine has it
   makeNotebookTools({ store: notebookStore, clock: { now: () => Date.now() }, redact, rank, nextTrust: memcore.nextTrust, findSimilar: memcore.findSimilar, similarity: memcore.tokenJaccard, onSaved: recordRunReceipt, sharedStanding: () => (tasteWithheld || !personalizationStore.read().enabled) ? [] : FeedbackMemory.stationStanding(notebookStore.get('notebook:' + agentId), otherAgentNotebooks(agentId)).filter(r => r.foreign) }).register(registry);   // §5.6: scrub secrets at the write boundary; rank: explicit read shares auto-recall's relevance order; nextTrust: notebook.feedback rating fold; findSimilar: near-dupe guard so the same belief can't accumulate in N phrasings; similarity: the same-subject listing; onSaved: this run's COMMS receipt
   widgetTools.register(registry);   // WIDGET RAILS Phase 2: widget.set — agent-fed rail readouts (memory capability: sandboxed local write, no consent, no network)
   makeRecallTool({ transcriptStore, ownStreamOnly: () => tasteWithheld }).register(registry);   // H1.3: recall_conversation — agent searches its own past dialogue (transcriptstore); joins the NOTEBOOK (memory) capability · a non-owner/group run (and its workers) never reads the Commander's other workstreams
@@ -20707,6 +20740,7 @@ async function runOnceCore(o) {
        uses (withCronWrite), so the agent path and the ROUTINES panel can never disagree about a job's state or
        clobber each other's concurrent advance. The tool owns arg policy; these own persistence only. ---- */
     updateRoutine: async (id, patch) => {
+      if (Object.prototype.hasOwnProperty.call(patch, 'fileScope')) throw new Error('only the authenticated host may enroll editable files');
       const next = {};
       // INJECTION TRIPWIRE — identical to POST /api/cron/update: an edit is the same surface as a create, so a
       // routine authored clean can otherwise be patched into a standing payload.
@@ -20742,6 +20776,9 @@ async function runOnceCore(o) {
            re-grants from the ROUTINES panel (POST /api/cron/update), which is not this path. */
         grantsCleared = cronStore.grantsRevokedByAgentEdit(current, next);
         if (grantsCleared.length) next.unattendedGrants = [];
+        // Keep a revoked marker, not absence: otherwise a FULL agent could edit the prompt and shed
+        // the file-only fence on the next fire. Only the operator can re-enroll or clear that fence.
+        if (grantsCleared.includes('files')) next.fileScope = { ...current.fileScope, revoked: true };
         const candidate = Object.assign({}, current, next);
         if (String(candidate.deliver || 'local').trim() === 'local' && candidate.attachToSession && !(candidate.origin && (candidate.origin.sessionId || candidate.origin.streamId))) throw new Error('follow-up needs a captured session origin');
         return cronStore.updateJob(jobs, id, next, { now: Date.now(), defaultTz: CRON_HOST_TZ });
@@ -21032,6 +21069,7 @@ async function runOnceCore(o) {
   const preAuthorityTools = resolved.tools.slice();
   resolved = enforceRunAuthority(resolved, registry, userControlAuthority);
   resolved = enforceEnabledToolsets(resolved, registry, unrestrictedHostNow() ? null : o.enabledToolsets);
+  if (routineFiles) resolved = routineFiles.restrict(resolved); // independent of cached/full approval posture
   /* WITHHELD COMMANDS, EXPLAINED (issue #77). The authority above removes workspace-process tools (shell.exec,
      verify.run, terminal.start …) from an ASK-mode non-interactive run even with a WORKBENCH placed — by design.
      Record which ones it removed (and the toolset switch would otherwise have allowed) so tool.search, the
@@ -21186,7 +21224,7 @@ async function runOnceCore(o) {
   // — only a watched, interactive lead can let a worker write/run shell, and only with a human's click.
   // a delegated worker shares its lead's broker; its asks carry who asked (attributeAsks — the page answers them on its row).
   // detachedConsent: a BACKGROUND worker (orchestration background:true) — its asks outlive the lead's turn (askHuman)
-  const consent = (o.consent && o.delegatedBy ? attributeAsks(o.consent, { agentId, runId, streamId: streamId || '', signal, detached: o.detachedConsent === true }) : o.consent) || makeConsentBroker({
+  const consent = routineFiles ? routineFiles.consent : (o.consent && o.delegatedBy ? attributeAsks(o.consent, { agentId, runId, streamId: streamId || '', signal, detached: o.detachedConsent === true }) : o.consent) || makeConsentBroker({
     // An owner DM with approvals OFF is the Commander acting directly, so it never waits on a second approval
     // channel. If that chat explicitly enables approvals, preserve the chosen in-chat prompt behavior instead.
     // a FUNCTION, re-read every call: the master FULL BYPASS switch must take effect — and revoke — on the
@@ -21258,7 +21296,10 @@ async function runOnceCore(o) {
     } : null,
     origin: memcore.originOf({ trigger: o.trigger, taskSource: o.taskSource }),   // stamped onto notebook.write records: WHICH surface formed this belief
     deliveryOrigin: o.deliveryOrigin || (streamId ? { streamId: streamId, sessionId: streamId, sessionTitle: o.sessionTitle || '' } : null),
-    authorize: userControlAuthority.authorize,
+    authorize: (call, tool) => {
+      if (routineFiles) { const scoped = routineFiles.authorize(call, tool); if (!scoped.ok) return scoped; }
+      return userControlAuthority.authorize(call, tool);
+    },
     userControl: userControlAuthority,
     // Delegation carries a live, MCP-only authority bridge alongside the existing consent broker.
     // The worker still applies its own equipment/profile, toolset, taint and consent gates.

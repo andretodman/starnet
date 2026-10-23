@@ -49,6 +49,9 @@ const { note: failNote } = require('../../failopen');
     // Wired only for the run registry (index.js). UNWIRED (the /api/file jail helper, tests) means the
     // historic behavior — every absolute path is illegal — so those surfaces stay locked to the jail.
     const pathTrust = typeof deps.pathTrust === 'function' ? deps.pathTrust : null;
+    // Exact-file unattended routines forbid symlink traversal even when a link stays inside a
+    // broader trusted project. Ordinary tools retain their historic contained-link behavior.
+    const noSymlinkTraversal = deps.noSymlinkTraversal === true;
     // OPTIONAL document-to-text for fs.read (.docx / .xlsx / .ipynb). Unwired = the historic behavior, where
     // those files decode as UTF-8 noise. index.js wires it with zlib.inflateRawSync.
     const docExtract = (deps.docExtract && typeof deps.docExtract.sniff === 'function') ? deps.docExtract : null;
@@ -961,6 +964,10 @@ const { note: failNote } = require('../../failopen');
     }
     async function gitignoreLayer(absDir, baseRel) {
       let text = null;
+      if (noSymlinkTraversal) {
+        try { if ((await fsp.lstat(P.join(absDir, '.gitignore'))).isSymbolicLink()) return null; }
+        catch (_) { return null; }
+      }
       try { text = await fsp.readFile(P.join(absDir, '.gitignore'), 'utf8'); } catch (_) { return null; }
       const rules = parseGitignore(text);
       return rules.length ? { baseRel, rules } : null;
@@ -984,6 +991,7 @@ const { note: failNote } = require('../../failopen');
         const abs = P.join(absDir, ent.name);
         // a link (or a Windows junction) must PROVE it still lands inside the jail before we read or descend
         if (typeof ent.isSymbolicLink === 'function' && ent.isSymbolicLink()) {
+          if (noSymlinkTraversal) { stats.skippedLinks = (stats.skippedLinks || 0) + 1; continue; }
           if (baseReal && !pathInside(await realpathOrSelf(abs), baseReal)) { stats.skippedLinks = (stats.skippedLinks || 0) + 1; continue; }
         }
         let isDir = ent.isDirectory(), st = null;
@@ -1074,6 +1082,8 @@ const { note: failNote } = require('../../failopen');
         }
         const rg = await rgBinary();
         const rgCommon = ['--no-require-git', '--no-messages', '--max-filesize', String(maxBytes), '-g', '!node_modules', '--sort', 'path'];
+        // Do not let an ambient ripgrep config enable --follow/--hidden in the bounded routine.
+        if (noSymlinkTraversal) rgCommon.unshift('--no-config', '--no-follow');
         if (!stats.gitignore) rgCommon.push('--no-ignore');
         const rgRel = (p) => { const n = String(p).replace(/\\/g, '/').replace(/^\.\//, ''); return startPrefix ? startPrefix + '/' + n : n; };
 

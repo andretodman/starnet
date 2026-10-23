@@ -58,7 +58,7 @@
   const iso = cron._internals.iso;            // ms(arg) -> ISO; deterministic (no zero-arg new Date)
 
   // fields a user may edit via updateJob. `id`, timestamps, run-state and counters are NOT editable here.
-  const EDITABLE = ['name', 'prompt', 'agentId', 'model', 'provider', 'deliver', 'skills', 'script', 'scriptTimeoutMs', 'workdir', 'contextFrom', 'monitorMode', 'misfire', 'unattendedGrants', 'noAgent', 'enabledToolsets', 'attachToSession', 'origin', 'runsLine', 'dockId'];
+  const EDITABLE = ['name', 'prompt', 'agentId', 'model', 'provider', 'deliver', 'skills', 'script', 'scriptTimeoutMs', 'workdir', 'fileScope', 'contextFrom', 'monitorMode', 'misfire', 'unattendedGrants', 'noAgent', 'enabledToolsets', 'attachToSession', 'origin', 'runsLine', 'dockId'];
 
   /* UNATTENDED CAPABILITY GRANT (2026-07-25) — the capability families the Commander explicitly approved for
      THIS routine to use with nobody watching. Default EMPTY: a routine grants nothing extra unless the user
@@ -186,6 +186,9 @@
       script: spec.script != null ? String(spec.script) : null,
       scriptTimeoutMs: spec.scriptTimeoutMs != null ? Math.min(120000, Math.max(1000, parseInt(spec.scriptTimeoutMs, 10) || 30000)) : 30000,
       workdir: spec.workdir != null ? String(spec.workdir) : null,
+      // Host-enrolled exact-file scope. Storage is not authority: the run re-validates against the
+      // live blessed root and exact job on every fs call. Absence gives old routines NO new grant.
+      fileScope: spec.fileScope == null ? null : JSON.parse(JSON.stringify(spec.fileScope)),
       contextFrom: spec.contextFrom == null ? null : normList(spec.contextFrom, 8, ID_RE),
       // G7 monitor state: the user-controlled mode is editable; hashes/check timestamps are runtime receipts.
       // The hash advances only after a successful run, so a failed changed source remains retryable.
@@ -266,6 +269,7 @@
       // re-normalize through the whitelist: the EDITABLE loop above copies the RAW patch value, so without this
       // a patch could persist an ungrantable capability name (same trap misfire guards against).
       if (Object.prototype.hasOwnProperty.call(patch, 'unattendedGrants')) next.unattendedGrants = normGrants(patch.unattendedGrants);
+      if (Object.prototype.hasOwnProperty.call(patch, 'fileScope')) next.fileScope = patch.fileScope == null ? null : JSON.parse(JSON.stringify(patch.fileScope));
       if (Object.prototype.hasOwnProperty.call(patch, 'origin')) next.origin = normOrigin(patch.origin);
       if (Object.prototype.hasOwnProperty.call(patch, 'noAgent')) next.noAgent = patch.noAgent === true;
       // re-normalize through the same === true rule as creation: a patch may never persist a truthy-ish value
@@ -608,7 +612,7 @@
   function grantsRevokedByAgentEdit(current, patch) {
     if (!current || !patch || !Object.prototype.hasOwnProperty.call(patch, 'prompt')) return [];
     if (String(patch.prompt == null ? '' : patch.prompt) === String(current.prompt == null ? '' : current.prompt)) return [];
-    return normGrants(current.unattendedGrants);
+    return normGrants(current.unattendedGrants).concat(current.fileScope != null ? ['files'] : []);
   }
 
   function toEnvelope(jobs) { return { version: ENVELOPE_VERSION, jobs: (jobs || []).slice() }; }

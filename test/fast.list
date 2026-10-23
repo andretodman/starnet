@@ -651,6 +651,7 @@ test/confbeats.test.js
 test/cron.test.js
 test/cron-human.test.js
 test/cron-store.test.js
+test/routine-file-scope.test.js
 test/mint-ledger.test.js
 test/cron.dispatch.test.js
 test/cron.chain.test.js
