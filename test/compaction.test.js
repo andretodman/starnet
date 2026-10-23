@@ -110,7 +110,8 @@ function reg() { const r = makeRegistry(); r.register({ name: 'noop', schema: { 
     const R = makeRegistry(); R.register({ name: 'noop', schema: { type: 'object' }, run: async () => big });
     // window 20000: threshold 13000 tokens. After the 3rd tool turn the provider reports 14000 -> fires; eliding the
     // results OUTSIDE a 1-turn tail drops the local estimate far under the threshold -> micro clears it.
-    const provider = makeReplayProvider({ turns: [toolTurn('c1', 6000), toolTurn('c2', 11000), toolTurn('c3', 14000), stopTurn] });
+    const provider = makeReplayProvider({ models: [{ id: 'replay/model', context_length: 20000 }],
+      turns: [toolTurn('c1', 6000), toolTurn('c2', 11000), toolTurn('c3', 14000), stopTurn] });
     const ctx = makeContext({ contextLimit: 20000, compactAt: 0.65, keepTailTurns: 1 });
     let llm = 0;
     const summarize = async () => { llm++; return { summary: 'S', usd: 0, tokens: 0 }; };
@@ -136,7 +137,8 @@ function reg() { const r = makeRegistry(); r.register({ name: 'noop', schema: { 
   {
     const { seq, emit } = setup();
     const R = makeRegistry(); R.register({ name: 'noop', schema: { type: 'object' }, run: async () => 'C'.repeat(20000) });
-    const provider = makeReplayProvider({ turns: [toolTurn('c1', 6000), toolTurn('c2', 11000), toolTurn('c3', 14000), stopTurn] });
+    const provider = makeReplayProvider({ models: [{ id: 'replay/model', context_length: 20000 }],
+      turns: [toolTurn('c1', 6000), toolTurn('c2', 11000), toolTurn('c3', 14000), stopTurn] });
     const ctx = makeContext({ contextLimit: 20000, compactAt: 0.65, keepTailTurns: 1 });
     let llm = 0;
     const summarize = async () => { llm++; return { summary: 'S', usd: 0, tokens: 0, chunks: 3 }; };

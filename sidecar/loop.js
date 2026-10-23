@@ -1578,7 +1578,7 @@
        enforced. Only ever LOWERS a known limit. */
     function adoptReportedWindow(limit) {
       const n = Math.floor(Number(limit) || 0);
-      if (!(n > 0)) return;
+      if (!Number.isFinite(n) || !(n > 0)) return;
       if (!contextLimit || n < contextLimit) contextLimit = n;
       if (context && typeof context.setContextLimit === 'function') {
         const cur = Number(context.contextLimit) || 0;
@@ -1590,6 +1590,14 @@
 
     async function maybeCompact(force, hint) {
       if (!context || !fidelity) return false;
+      // A cold local catalog learns /api/show facts DURING the first stream, after index.js constructed this
+      // manager with its fallback window. Read the current provider before every fold/preflight so that a
+      // successful tool turn cannot keep the stale larger budget until it overflows. Only lower known bounds;
+      // this does not resize the model, switch providers, restart the run, or replay any completed host effect.
+      if (provider && typeof provider.contextLimit === 'function') {
+        try { adoptReportedWindow(provider.contextLimit(model)); }
+        catch (e) { failNote('loop.compaction.providerWindow', e); }
+      }
       /* THE TRIGGER IS THE USAGE ANCHOR (audit F1). It read the PREVIOUS request's prompt_tokens — blind to every tool
          result appended since — and did nothing at all until a first reading existed, so a resumed history at 150% of
          the window went out as-is on the first call with zero fold attempts (probe 09-22). Now: the last real count +

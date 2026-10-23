@@ -475,7 +475,7 @@ function chatFixture() {
       const { seq, emit } = setup();
       let calls = 0;
       const provider = { async *stream() { calls++; if (calls === 1) throw new Error('prompt is too long'); for (const ev of okTurn) yield ev; },
-        priceOf: () => ({ prompt: '0.000001', completion: '0.000002' }), contextLimit: () => 10 };
+        priceOf: () => ({ prompt: '0.000001', completion: '0.000002' }), contextLimit: () => 1000 };
       const ctxMgr = makeContext({ contextLimit: 1000, compactAt: 0.65, keepTail: 1 });
       let summarized = 0;
       const res = await runAgentLoop({
@@ -503,7 +503,7 @@ function chatFixture() {
       // the breaker trips on the proactive fold attempts before turns 1 and 2 (the preflight counts); the overflow then
       // lands on turn 2 while the older history is still unfolded, so the fallback fold has something to shrink
       const provider = { async *stream() { calls++; if (calls <= 1) { for (const ev of toolT('c' + calls)) yield ev; return; } if (calls === 2) throw new Error('prompt is too long'); for (const ev of okTurn) yield ev; },
-        priceOf: () => ({ prompt: '0', completion: '0' }), contextLimit: () => 10 };
+        priceOf: () => ({ prompt: '0', completion: '0' }), contextLimit: () => 100000 };
       const ctxMgr = makeContext({ contextLimit: 10, compactAt: 0.65, keepTail: 1 });   // 8 > 6.5 -> a proactive fold is attempted at the top of turns 1 and 2
       let attempts = 0;
       const summarize = async () => { attempts++; throw new Error('summarizer down'); };

@@ -279,7 +279,8 @@ function usageAnchor(reading, rulerNow) {
 
 /* The numbers an overflow error names, or null. Anthropic "prompt is too long: 215000 tokens > 200000 maximum";
    OpenAI-compatible "maximum context length is 64000 tokens. However, your messages resulted in 82069 tokens";
-   Gemini "The input token count (1234567) exceeds the maximum number of tokens allowed (1048576)". */
+   Gemini "The input token count (1234567) exceeds the maximum number of tokens allowed (1048576)";
+   Ollama "request (44011 tokens) exceeds the available context size (40960 tokens)". */
 function reportedWindow(text) {
   const s = String(text == null ? '' : text).replace(/(\d),(?=\d{3}\b)/g, '$1');
   const sane = (used, limit) => (limit >= 1024 && limit <= 50000000) ? { used: used > 0 ? used : 0, limit } : null;
@@ -289,6 +290,15 @@ function reportedWindow(text) {
   if (m) { const u = /(?:resulted in|requested) (\d+) tokens/i.exec(s); return sane(u ? Number(u[1]) : 0, Number(m[1])); }
   m = /input token count\D{0,4}(\d+)\D{0,4}exceeds the maximum number of tokens allowed\D{0,4}(\d+)/i.exec(s);
   if (m) return sane(Number(m[1]), Number(m[2]));
+  m = /request\s*\((\d+)\s+tokens?\)\s+exceeds the available context size\s*\((\d+)\s+tokens?\)/i.exec(s);
+  if (m) return sane(Number(m[1]), Number(m[2]));
+  // Native Ollama also nests a serialized error in error:string. These allowlisted numeric fields survive
+  // that escaping; unrelated diagnostics containing n_ctx must never become an authoritative window.
+  if (/exceed_context_size_error/i.test(s)) {
+    const used = /\bn_prompt_tokens[\\"]*\s*:\s*(\d+)/.exec(s);
+    const limit = /\bn_ctx[\\"]*\s*:\s*(\d+)/.exec(s);
+    if (limit) return sane(used ? Number(used[1]) : 0, Number(limit[1]));
+  }
   return null;
 }
 

@@ -1112,6 +1112,7 @@ test/loop.batch-dedupe.test.js
 test/errorclass.overflow-phrasings.test.js
 test/loop.prestream-outage-ladder.test.js
 test/loop.overflow.anthropic.test.js
+test/loop.overflow.ollama.test.js
 test/loop.output-cap.test.js
 test/shell.timeout-telemetry.test.js
 test/registry.cancel-races-deaf-tool.test.js
