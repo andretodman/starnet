@@ -184,7 +184,7 @@
      console host in the body. An "openai-compatible http …" error with no host names nobody, so it returns null
      and the copy stays provider-neutral. Ids are the AI & MODELS card ids (.prov-card[data-provider]). */
   const PROVIDER_IDS = ['starnet', 'openrouter', 'codex', 'grok', 'kimi', 'openai', 'anthropic', 'gemini', 'xai', 'groq',
-    'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'ollama', 'custom'];
+    'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'gx10-glm', 'ollama', 'custom'];
   const PROVIDER_WORDS = { codex: 'CHATGPT', grok: 'GROK', kimi: 'KIMI', starnet: 'STARNET' };
   function providerWord(id) { return PROVIDER_WORDS[id] || String(id || '').toUpperCase(); }
   // a provider's name inside a SENTENCE (org P03): the brand's own case, like the sibling rows' 'No ChatGPT sign-in yet'.

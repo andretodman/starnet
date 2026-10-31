@@ -541,6 +541,44 @@
       order: 58
     },
     {
+      id: 'gx10-glm',
+      aliases: ['glm-colibri', 'gx10-colibri'],
+      name: 'GX10 GLM · Colibri',
+      label: 'GX10 GLM · COLIBRI',
+      endpoint: '127.0.0.1:11435/v1',
+      blurb: 'complex local GX10 model',
+      live: true,
+      adapter: 'openai-compatible',
+      apiMode: 'chat_completions',
+      authType: 'none',
+      keyRequired: false,
+      modelsRequireAuth: false,
+      baseUrl: 'http://127.0.0.1:11435/v1',
+      modelsPath: '/models',
+      defaultReasoningEffort: 'none',
+      unmetered: true,
+      credentialPool: false,
+      // Chat is always available. Agent tools turn on only after the live QA script writes a receipt
+      // bound to this StarNet commit, profile version, model id, and fixed endpoint.
+      supportsTools: false,
+      agentToolsAfterReceipt: true,
+      agentReadinessProfileVersion: 1,
+      supportsReasoning: true,
+      wireReasoningEffort: false,
+      connectTimeoutMs: 300000,
+      maxOutputTokens: 2048,
+      staticModels: [
+        {
+          id: 'glm-5.2-colibri-e8-iq3',
+          name: 'GLM 5.2 Colibri',
+          context_length: 16384,
+          supportsTools: false,
+          supportsReasoning: true
+        }
+      ],
+      order: 59
+    },
+    {
       id: 'ollama',
       aliases: ['ollama-local'],
       name: 'Ollama',

@@ -12,14 +12,15 @@
       require('./anthropic.js'),
       require('./gemini.js'),
       require('./registry.js'),
-      require('./claude-cli.js')
+      require('./claude-cli.js'),
+      require('./gx10-glm-readiness.js')
     );
   } else {
     root.SK = root.SK || {};
     root.SK.providers = root.SK.providers || {};
-    root.SK.providers.factory = factory(root.SK.providers.openrouter, root.SK.providers.codex, root.SK.providers.openaiCompatible, root.SK.providers.anthropic, root.SK.providers.gemini, root.SK.providers.registry, root.SK.providers.claudeCli);
+    root.SK.providers.factory = factory(root.SK.providers.openrouter, root.SK.providers.codex, root.SK.providers.openaiCompatible, root.SK.providers.anthropic, root.SK.providers.gemini, root.SK.providers.registry, root.SK.providers.claudeCli, null);
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (openrouter, codex, openaiCompatible, anthropic, gemini, registry, claudeCli) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (openrouter, codex, openaiCompatible, anthropic, gemini, registry, claudeCli, gx10GlmReadiness) {
   'use strict';
 
   const PROVIDER_IDS = registry.providerIds();
@@ -147,6 +148,14 @@
       const mergedHeaders = (profile.extraHeaders || opts.headers)
         ? Object.assign({}, profile.extraHeaders || {}, opts.headers || {})
         : undefined;
+      const receiptToolsReady = profile.agentToolsAfterReceipt === true
+        && gx10GlmReadiness && gx10GlmReadiness.isReady(profile);
+      const effectiveTools = profile.agentToolsAfterReceipt === true
+        ? !!receiptToolsReady
+        : (typeof profile.supportsTools === 'boolean' ? profile.supportsTools : null);
+      const staticModels = (profile.staticModels || []).map(model => profile.agentToolsAfterReceipt === true
+        ? Object.assign({}, model, { supportsTools: effectiveTools })
+        : model);
       return openaiCompatible.makeOpenAICompatibleProvider({
         fetch: opts.fetch,
         clock: opts.clock,
@@ -167,10 +176,10 @@
         reasoningModels: profile.reasoningModels,
         reasoningOffEffort: profile.reasoningOffEffort,
         replayReasoningContent: profile.replayReasoningContent === true,
-        supportsTools: typeof profile.supportsTools === 'boolean' ? profile.supportsTools : null,
+        supportsTools: effectiveTools,
         // wireStreamOptions:false = endpoint rejects/lacks stream_options (usage streams by default there)
         includeUsage: profile.wireStreamOptions === false ? false : opts.includeUsage,
-        staticModels: profile.staticModels,
+        staticModels,
         // prices.js family for endpoints whose /models carries no pricing (null = stays honestly unpriced)
         priceFamily: (typeof profile.priceFamily === 'string') ? profile.priceFamily : null,
         // Local runtimes may need to load a model before returning headers. Hosted providers retain the

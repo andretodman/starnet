@@ -62,6 +62,7 @@ ok(/click again to confirm removal/.test(station), 'armed REMOVE shows an inline
 
 // PU-07: keyless endpoints are configuration, not credentials, and ACTIVE requires a live catalog probe.
 ok(/if\s*\(p\s*===\s*'ollama'\)\s*return\s*false/.test(harness), 'Ollama never manufactures a stored credential');
+ok(/if\s*\(p\s*===\s*'gx10-glm'\)\s*return\s*false/.test(harness), 'GX10 GLM never manufactures a stored credential');
 ok(/async\s+function\s+probeProvider\s*\(/.test(harness), 'Harness exposes a live provider endpoint probe');
 ok(/credentialSaved[\s\S]*endpointConfigured[\s\S]*reachable[\s\S]*catalogAvailable[\s\S]*selected/.test(harness), 'provider probe separates credential, endpoint, reachability, catalog, and selection facts');
 ok(/h\.probeProvider\(provider\)/.test(station), 'Settings provider cards refresh from the live Harness probe');
@@ -94,7 +95,7 @@ ok(/else if \(addProvider === active && \(providerAcceptsKey\(addProvider\) \|\|
   && !/Add it on its card above/.test(station), 'the selected provider\'s no-key line names its card as a door, never "its card above"');
 // (wiring) the line names what THAT card is missing: STARNET MANAGED takes no key (its card offers ↗ LINK STATION), CUSTOM's
 // key is optional and its card reads ○ NO ENDPOINT — "has no key yet" + "ADD IT" sent both to a card with no such field
-ok(/return !isOAuthProvider\(provider\) && provider !== 'ollama' && provider !== 'claude-cli' && provider !== 'starnet';/.test(station), 'STARNET MANAGED never counts as a key provider (agrees with harness providerNeedsKey)');
+ok(/return !isOAuthProvider\(provider\) && provider !== 'ollama' && provider !== 'gx10-glm' && provider !== 'claude-cli' && provider !== 'starnet';/.test(station), 'STARNET MANAGED and GX10 GLM never count as key providers (agrees with harness providerNeedsKey)');
 {
   const at = station.indexOf('  function selectedSetupLineHtml(');
   const src = station.slice(at, station.indexOf('\n  }\n', at) + 4);

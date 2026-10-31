@@ -16,6 +16,7 @@ module.exports = (async () => {
   A.ok(ids.indexOf('grok') >= 0, 'grok (OAuth) is registered');
   A.ok(ids.indexOf('kimi') >= 0, 'kimi (OAuth) is registered');
   A.ok(ids.indexOf('ollama') >= 0, 'ollama is registered');
+  A.ok(ids.indexOf('gx10-glm') >= 0, 'GX10 GLM is registered');
   A.ok(ids.indexOf('custom') >= 0, 'custom is registered');
 
   A.eq(factory.normalizeProviderId('openai-codex', ''), 'codex', 'codex alias normalizes');
@@ -41,6 +42,7 @@ module.exports = (async () => {
     A.eq(factory.providerRequiresKey(id), true, id + ' requires a key');
   });
   A.eq(factory.providerRequiresKey('ollama'), false, 'ollama is keyless');
+  A.eq(factory.providerRequiresKey('gx10-glm'), false, 'GX10 GLM is keyless');
   A.eq(factory.providerRequiresBaseUrl('custom'), true, 'custom requires a base URL');
 
   const profiles = factory.listProviderProfiles();
