@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
+import { request } from 'node:http';
 
 const PROVIDER_ID = 'gx10-glm';
 const MODEL_ID = 'glm-5.2-colibri-e8-iq3';
@@ -35,17 +36,29 @@ function writeReceipt(passed, error = '') {
 }
 
 async function jsonFetch(route, init = {}, timeoutMs = 10800000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(new Error('request timeout')), timeoutMs);
-  try {
-    const response = await fetch(BASE_URL + route, { ...init, signal: controller.signal });
-    const text = await response.text();
-    let body = null;
-    try { body = JSON.parse(text); } catch (_) {}
-    if (!response.ok) throw new Error(route + ' returned HTTP ' + response.status + ': ' + text.slice(0, 300));
-    if (!body) throw new Error(route + ' did not return JSON');
-    return body;
-  } finally { clearTimeout(timer); }
+  return new Promise((resolve, reject) => {
+    const req = request(BASE_URL + route, {
+      method: init.method || 'GET',
+      headers: init.headers || {}
+    }, response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('error', reject);
+      response.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        let body = null;
+        try { body = JSON.parse(text); } catch (_) {}
+        if ((response.statusCode || 500) >= 400) return reject(new Error(route + ' returned HTTP ' + response.statusCode + ': ' + text.slice(0, 300)));
+        if (!body) return reject(new Error(route + ' did not return JSON'));
+        resolve(body);
+      });
+    });
+    const timer = setTimeout(() => req.destroy(new Error('request timeout')), timeoutMs);
+    req.on('close', () => clearTimeout(timer));
+    req.on('error', reject);
+    if (init.body) req.write(init.body);
+    req.end();
+  });
 }
 
 function completion(messages, tools, toolChoice = 'auto', maxTokens = 256) {
