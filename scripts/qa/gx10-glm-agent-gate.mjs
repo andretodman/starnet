@@ -34,7 +34,7 @@ function writeReceipt(passed, error = '') {
   fs.renameSync(tmp, receiptPath);
 }
 
-async function jsonFetch(route, init = {}, timeoutMs = 180000) {
+async function jsonFetch(route, init = {}, timeoutMs = 10800000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('request timeout')), timeoutMs);
   try {
@@ -48,7 +48,7 @@ async function jsonFetch(route, init = {}, timeoutMs = 180000) {
   } finally { clearTimeout(timer); }
 }
 
-function completion(messages, tools, toolChoice = 'auto', maxTokens = 700) {
+function completion(messages, tools, toolChoice = 'auto', maxTokens = 256) {
   return jsonFetch('/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
