@@ -37,9 +37,11 @@ function writeReceipt(passed, error = '') {
 
 async function jsonFetch(route, init = {}, timeoutMs = 10800000) {
   return new Promise((resolve, reject) => {
+    const headers = { ...(init.headers || {}) };
+    if (init.body) headers['Content-Length'] = Buffer.byteLength(init.body);
     const req = request(BASE_URL + route, {
       method: init.method || 'GET',
-      headers: init.headers || {}
+      headers
     }, response => {
       const chunks = [];
       response.on('data', chunk => chunks.push(chunk));
