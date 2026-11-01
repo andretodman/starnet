@@ -3463,6 +3463,9 @@ fn harness_store_provider_key(
         // keychain entry.
         if provider_id != "codex"
             && provider_id != "ollama"
+            && provider_id != "gx10-glm-fast"
+            && provider_id != "gx10-glm-reasoning"
+            && provider_id != "gx10-glm"
             && provider_id != "claude-cli"
             && provider_id != "grok"
             && provider_id != "kimi"

@@ -7,7 +7,9 @@ window.OverseerSetup = (() => {
   const providers = {
     grok: ['Grok','Sign in'], kimi: ['Kimi','Sign in'], openrouter: ['OpenRouter','API key'],
     openai: ['OpenAI','ChatGPT or API key'], anthropic: ['Anthropic','API key'], gemini: ['Gemini','API key'],
-    ollama: ['Ollama','Free · local'], 'gx10-glm': ['GX10 GLM','Complex · local'], xai: ['xAI','API key'], groq: ['Groq','API key'],
+    ollama: ['Ollama','Free · local'], 'gx10-glm-fast': ['GX10 GLM','Fast · local'],
+    'gx10-glm-reasoning': ['GX10 GLM','Reasoning · local'], 'gx10-glm': ['GX10 GLM','Deep · local'],
+    xai: ['xAI','API key'], groq: ['Groq','API key'],
     mistral: ['Mistral','API key'], deepseek: ['DeepSeek','API key'], together: ['Together','API key'],
     fireworks: ['Fireworks','API key'], perplexity: ['Perplexity','API key'], cerebras: ['Cerebras','API key'],
     custom: ['Custom','Your endpoint'], 'claude-cli': ['Claude Code','Your Claude subscription']
@@ -18,7 +20,9 @@ window.OverseerSetup = (() => {
     const help = el('ov-connection-help');
     if (help) help.textContent = provider === 'starnet' ? 'Confirm your account in the browser, then choose a model.'
       : provider === 'ollama' ? 'Choose a model installed on this computer.'
-      : provider === 'gx10-glm' ? 'Uses the fixed Colibri service on this GX10. Chat is keyless; agent tools require a matching readiness receipt.'
+      : provider === 'gx10-glm-fast' ? 'Uses GLM 4.7 Flash with thinking off for responsive local work.'
+      : provider === 'gx10-glm-reasoning' ? 'Uses GLM 4.7 Flash with thinking on for coding and multi-step tasks.'
+      : provider === 'gx10-glm' ? 'Uses the fixed Colibri Deep service. Chat is keyless; agent tools require a matching readiness receipt.'
       : provider === 'claude-cli' ? 'Sign in with your Claude subscription, then choose a model.'
       : provider === 'custom' ? 'Enter your endpoint, then choose or enter a model ID.'
       : provider === 'openai' ? 'Sign in with ChatGPT or add an OpenAI API key.'
@@ -27,7 +31,7 @@ window.OverseerSetup = (() => {
     const logo = el('ov-connection-logo');
     if (logo) {
       logo.classList.toggle('ov-starnet-logo', provider === 'starnet');
-      logo.style.setProperty('--provider-icon', 'url("' + new URL('assets/brand/' + (provider === 'starnet' ? 'starnet-wordmark.svg' : 'providers/' + (provider === 'codex' ? 'openai' : provider === 'gx10-glm' ? 'ollama' : provider) + '.svg'), document.baseURI).href + '")');
+      logo.style.setProperty('--provider-icon', 'url("' + new URL('assets/brand/' + (provider === 'starnet' ? 'starnet-wordmark.svg' : 'providers/' + (provider === 'codex' ? 'openai' : provider.startsWith('gx10-glm') ? 'ollama' : provider) + '.svg'), document.baseURI).href + '")');
     }
   }
   function beginConnection() {
@@ -118,7 +122,7 @@ window.OverseerSetup = (() => {
       const id = button.dataset.prov, info = providers[id];
       if (!info) return;
       const icon = document.createElement('span'); icon.className = 'ov-provider-logo';
-      icon.style.setProperty('--provider-icon', 'url("' + new URL('assets/brand/providers/' + (id === 'gx10-glm' ? 'ollama' : id) + '.svg', document.baseURI).href + '")');
+      icon.style.setProperty('--provider-icon', 'url("' + new URL('assets/brand/providers/' + (id.startsWith('gx10-glm') ? 'ollama' : id) + '.svg', document.baseURI).href + '")');
       icon.setAttribute('aria-hidden', 'true');
       const label = document.createElement('span'); label.className = 'ov-provider-label';
       const name = document.createElement('span'); name.textContent = info[0];

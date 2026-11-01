@@ -424,6 +424,7 @@
        run continues on the /v1 wire exactly as before. */
     let nativeWire = opts.nativeOllama === true && !!ollamaNative;
     const nativeBase = nativeWire ? ollamaNative.nativeRoot(baseUrl) : '';
+    const nativeThink = typeof opts.nativeThink === 'boolean' ? opts.nativeThink : undefined;
     // Where the Ollama server runs, for its user-facing copy: loopback is "this computer", anything else is named.
     const ollamaHost = opts.nativeOllama === true ? provider.runtime.requestHostOf(baseUrl) : '';
     const ollamaIsLoopback = !ollamaHost || /^(?:localhost|.+\.localhost|127(?:\.\d+){3}|0\.0\.0\.0|\[?::1\]?)$/i.test(ollamaHost);
@@ -643,7 +644,7 @@
         // A background call that chose no effort of its own must not inherit the run's default (a CUSTOM endpoint on
         // Ollama carries CUSTOM's 'medium', which maps to think:true). An explicit aux effort still rides.
         if (background && !req.reasoningEffort && facts && facts.supportsReasoning === true) delete body.reasoning_effort;
-        const think =(background && facts && facts.supportsReasoning === true) ? false : undefined;
+        const think = (background && facts && facts.supportsReasoning === true) ? false : nativeThink;
         wire = { native: true, modelMax, think, numCtx: ollamaNative.pickNumCtx(need, { pinned: pinnedCtx, ceiling: ctxCeiling, modelMax, floor: ollamaWindow(nativeBase, req.model) }) };
       }
       let res;

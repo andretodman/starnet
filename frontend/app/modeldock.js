@@ -58,7 +58,7 @@ const ModelDock = (() => {
   };
   // CLAUDE CODE sits with the other subscription sign-ins (2026-10-02): at 15.5 its handful of models sank under
   // OpenRouter's whole catalog, and only an exact "claude code" search found them.
-  const PROVIDER_RANK = { starnet: -1, codex: 0, grok: 1, kimi: 2, 'claude-cli': 2.5, 'gx10-glm': 3, openrouter: 4, openai: 5, anthropic: 6, gemini: 7, xai: 8, groq: 9, mistral: 10, deepseek: 11, together: 12, fireworks: 13, perplexity: 14, cerebras: 15, ollama: 16, custom: 17 };
+  const PROVIDER_RANK = { starnet: -1, codex: 0, grok: 1, kimi: 2, 'claude-cli': 2.5, 'gx10-glm-fast': 3, 'gx10-glm-reasoning': 3.1, 'gx10-glm': 3.2, openrouter: 4, openai: 5, anthropic: 6, gemini: 7, xai: 8, groq: 9, mistral: 10, deepseek: 11, together: 12, fireworks: 13, perplexity: 14, cerebras: 15, ollama: 16, custom: 17 };
 
   let opts = {};
   let wired = false;
@@ -133,7 +133,7 @@ const ModelDock = (() => {
   }
   function providerLabel(p) {
     p = normalizeProvider(p);
-    const map = { starnet: 'STARNET', codex: 'GPT / CODEX', grok: 'GROK OAUTH', kimi: 'KIMI OAUTH', 'gx10-glm': 'GX10 GLM', openrouter: 'OPENROUTER', openai: 'OPENAI API', anthropic: 'ANTHROPIC', gemini: 'GEMINI', xai: 'XAI', groq: 'GROQ', mistral: 'MISTRAL', deepseek: 'DEEPSEEK', together: 'TOGETHER', fireworks: 'FIREWORKS', perplexity: 'PERPLEXITY', cerebras: 'CEREBRAS', ollama: 'OLLAMA', 'claude-cli': 'CLAUDE CODE', custom: 'CUSTOM' };
+    const map = { starnet: 'STARNET', codex: 'GPT / CODEX', grok: 'GROK OAUTH', kimi: 'KIMI OAUTH', 'gx10-glm-fast': 'GX10 GLM · FAST', 'gx10-glm-reasoning': 'GX10 GLM · REASONING', 'gx10-glm': 'GX10 GLM · DEEP', openrouter: 'OPENROUTER', openai: 'OPENAI API', anthropic: 'ANTHROPIC', gemini: 'GEMINI', xai: 'XAI', groq: 'GROQ', mistral: 'MISTRAL', deepseek: 'DEEPSEEK', together: 'TOGETHER', fireworks: 'FIREWORKS', perplexity: 'PERPLEXITY', cerebras: 'CEREBRAS', ollama: 'OLLAMA', 'claude-cli': 'CLAUDE CODE', custom: 'CUSTOM' };
     return map[p] || String(p || 'openrouter').toUpperCase();
   }
   function normalizeProvider(p) {
@@ -156,10 +156,15 @@ const ModelDock = (() => {
     // managed credits — bearer is the linked device token (mirrors app.js + registry.js aliases)
     if (p === 'starnet' || p === 'starnet-cloud' || p === 'managed') return 'starnet';
     if (p === 'ollama' || p === 'ollama-local') return 'ollama';
+    if (p === 'gx10-glm-fast' || p === 'gx10-flash' || p === 'glm-flash' || p === 'gx10-glm-4.7-fast') return 'gx10-glm-fast';
+    if (p === 'gx10-glm-reasoning' || p === 'gx10-glm-thinking' || p === 'glm-flash-reasoning') return 'gx10-glm-reasoning';
     if (p === 'gx10-glm' || p === 'glm-colibri' || p === 'gx10-colibri') return 'gx10-glm';
     if (p === 'claude-cli' || p === 'claude-code' || p === 'claude-code-cli') return 'claude-cli';
     if (p === 'custom' || p === 'openai-compatible' || p === 'local' || p === 'vllm' || p === 'lmstudio') return 'custom';
     return 'openrouter';
+  }
+  function isGx10GlmProvider(p) {
+    return /^gx10-glm(?:-(?:fast|reasoning))?$/.test(normalizeProvider(p));
   }
   function isAgentModel(item) {
     return !(item && normalizeProvider(item.provider) === 'openai'
@@ -345,7 +350,7 @@ const ModelDock = (() => {
       if (typeof Harness !== 'undefined' && Harness.getKey && Harness.getKey(p)) return true;
       if (typeof Harness !== 'undefined' && Harness.configured && Harness.configured(p)) return true;
     } catch (_) {}
-    if (p === 'ollama' || p === 'gx10-glm' || p === 'claude-cli') return true;   // keyless local brains: their catalog is the proof
+    if (p === 'ollama' || isGx10GlmProvider(p) || p === 'claude-cli') return true;   // keyless local brains: their catalog is the proof
     return false;
   }
 
@@ -586,7 +591,7 @@ const ModelDock = (() => {
     loadTiers(!!force).then(() => { if (!loading && generation === fetchGeneration) renderList(); }).catch(() => {});
     // 'starnet' first: a linked station's own credits are the most direct way to run, and its catalog is
     // the whole managed lineup. providerEnabled() keeps it out of the list when no credits are configured.
-    const ids = ['starnet', 'codex', 'grok', 'kimi', 'gx10-glm', 'openrouter', 'openai', 'anthropic', 'gemini', 'xai', 'groq', 'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'ollama', 'claude-cli', 'custom'];
+    const ids = ['starnet', 'codex', 'grok', 'kimi', 'gx10-glm-fast', 'gx10-glm-reasoning', 'gx10-glm', 'openrouter', 'openai', 'anthropic', 'gemini', 'xai', 'groq', 'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'ollama', 'claude-cli', 'custom'];
     const active = provider();
     if (ids.indexOf(active) < 0) ids.unshift(active);
     const pending = ids.map(p => fetchProviderModels(p, force));
@@ -1030,7 +1035,7 @@ const ModelDock = (() => {
   async function computeCatalog(force, ensure) {
     // #93: 'starnet' leads here exactly as in the dock — without it a per-agent picker offered managed credits only
     // while the FOCUSED agent already ran on them. providerEnabled() drops it (empty list) when the station is unlinked.
-    const ids = ['starnet', 'codex', 'grok', 'kimi', 'gx10-glm', 'openrouter', 'openai', 'anthropic', 'gemini', 'xai', 'groq', 'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'ollama', 'claude-cli', 'custom'];
+    const ids = ['starnet', 'codex', 'grok', 'kimi', 'gx10-glm-fast', 'gx10-glm-reasoning', 'gx10-glm', 'openrouter', 'openai', 'anthropic', 'gemini', 'xai', 'groq', 'mistral', 'deepseek', 'together', 'fireworks', 'perplexity', 'cerebras', 'ollama', 'claude-cli', 'custom'];
     const active = provider();
     if (ids.indexOf(active) < 0) ids.unshift(active);
     const parts = await Promise.all(ids.map(p => fetchProviderModels(p, force).catch(() => [])));

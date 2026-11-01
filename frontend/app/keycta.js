@@ -25,6 +25,8 @@ const KeyCTA = (() => {
     if (p === 'grok' || p === 'grok-oauth' || p === 'supergrok') return 'grok';
     if (p === 'kimi' || p === 'moonshot' || p === 'kimi-for-coding') return 'kimi';
     if (p === 'ollama' || p === 'ollama-local') return 'ollama';
+    if (p === 'gx10-glm-fast' || p === 'gx10-flash' || p === 'glm-flash') return 'gx10-glm-fast';
+    if (p === 'gx10-glm-reasoning' || p === 'gx10-glm-thinking' || p === 'glm-flash-reasoning') return 'gx10-glm-reasoning';
     if (p === 'gx10-glm' || p === 'glm-colibri' || p === 'gx10-colibri') return 'gx10-glm';
     if (p === 'claude-cli' || p === 'claude-code' || p === 'claude-code-cli') return 'claude-cli';
     if (p === 'custom' || p === 'openai-compatible' || p === 'local' || p === 'vllm' || p === 'lmstudio') return 'custom';
@@ -33,7 +35,7 @@ const KeyCTA = (() => {
   function providerNeedsKey(p) {
     p = normProv(p);
     // codex/grok/kimi are keyless OAuth sign-ins; ollama/custom are keyless-by-design endpoints.
-    return p !== 'codex' && p !== 'grok' && p !== 'kimi' && p !== 'ollama' && p !== 'gx10-glm' && p !== 'custom' && p !== 'claude-cli';
+    return p !== 'codex' && p !== 'grok' && p !== 'kimi' && p !== 'ollama' && !p.startsWith('gx10-glm') && p !== 'custom' && p !== 'claude-cli';
   }
   function activeProvider() {
     return normProv((typeof Harness !== 'undefined' && Harness.getProv) ? Harness.getProv() : 'openrouter');

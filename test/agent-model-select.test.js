@@ -18,8 +18,11 @@ A.ok(/catalog:\s*\(o\)\s*=>\s*computeCatalog/.test(dock), 'ModelDock exposes a p
 A.ok(/reconcile:\s*\(\)\s*=>\s*fetchModels\(false\)/.test(dock), 'provider switches can revalidate the saved model against cached live catalogs');
 A.ok(/async function computeCatalog\(/.test(dock), 'computeCatalog fans out across providers without touching the dock');
 A.ok(/labels:\s*\{/.test(dock) && /efforts:\s*\{/.test(dock), 'ModelDock exposes label + effort helpers for reuse');
-A.ok(/'gx10-glm':\s*'GX10 GLM'/.test(dock) && /'gx10-glm'/.test(dock.match(/const ids = \[[^\]]+\]/)?.[0] || ''),
-  'the shared model catalog includes the complex local GX10 GLM provider');
+A.ok(/'gx10-glm-fast':\s*'GX10 GLM · FAST'/.test(dock)
+  && /'gx10-glm-reasoning':\s*'GX10 GLM · REASONING'/.test(dock)
+  && /'gx10-glm':\s*'GX10 GLM · DEEP'/.test(dock)
+  && /'gx10-glm-fast'/.test(dock.match(/const ids = \[[^\]]+\]/)?.[0] || ''),
+  'the shared model catalog includes Fast, Reasoning, and Deep GX10 GLM providers');
 A.eq(ModelDock._internals.selectorLabel('anthropic/claude-haiku-4.5', 'medium'),
   'Model selector: claude haiku 4.5, Medium reasoning',
   'the model-chip accessible name includes the selected model and reasoning effort');

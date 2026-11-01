@@ -167,7 +167,7 @@
         baseUrl: opts.baseUrl || profile.baseUrl,
         chatPath: profile.chatPath,
         modelsPath: profile.modelsPath,
-        reasoningEffort: opts.reasoningEffort,
+        reasoningEffort: profile.fixedReasoningEffort || opts.reasoningEffort,
         // profile wire hints: does this endpoint document `reasoning_effort`, and is tool support
         // asserted/denied at the provider level (fallback when the catalog carries no capability data)?
         sendReasoningEffort: profile.wireReasoningEffort === true,
@@ -191,6 +191,10 @@
         // Ollama: chat on the native /api/chat with a request-sized window (registry `nativeOllama`); an env pin or
         // ceiling wins over the profile's, the same way the output ceilings above resolve.
         nativeOllama: wire.nativeOllama === true,
+        // A named mode may intentionally pin native thinking OFF. Chat Completions represents
+        // none by omitting reasoning_effort, so carry that policy separately to Ollama native
+        // boolean thinking field instead of falling back to the model default.
+        nativeThink: profile.fixedReasoningEffort === 'none' ? false : undefined,
         // ...and whether that native wire was only BORROWED on the URL's look (a CUSTOM card): a server that then proves
         // it is not Ollama is StarNet's wrong guess, so the turn moves to /v1 instead of blaming the user's card.
         nativeOllamaBorrowed: wire !== profile && wire.nativeOllama === true,
