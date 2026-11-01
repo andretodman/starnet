@@ -333,6 +333,7 @@
     if (!baseUrl) throw new Error((opts.label || 'openai-compatible') + ' provider has no endpoint configured (empty base URL)');
     const chatPath = cleanPath(opts.chatPath, '/chat/completions');
     const modelsPath = cleanPath(opts.modelsPath, '/models');
+    const fixedModel = String(opts.fixedModel || '').trim();
     // Usage reporting defaults ON: streams must report token usage so cost accounting and
     // context compaction work. Callers may opt out with an explicit includeUsage: false.
     const includeUsage = opts.includeUsage !== false;
@@ -573,7 +574,7 @@
       const messages = opts.nativeOllama === true && ollamaNative
         ? ollamaNative.leadingSystemMessages(prepared)
         : provider.chatRoleProjection(prepared, req.model);
-      const body = { model: req.model, messages, stream: true };
+      const body = { model: fixedModel || req.model, messages, stream: true };
       if (includeUsage && !skip('stream_options')) body.stream_options = { include_usage: true };
       const explicitMax = Math.floor(Number(req.max_tokens || req.maxTokens || 0)) || 0;
       // Only the host's explicit casual-turn classification selects this cap. No-tool auxiliary
@@ -958,11 +959,24 @@
             if (!res.ok) return [];
             const j = await res.json();
             const raw = Array.isArray(j.data) ? j.data : (Array.isArray(j.models) ? j.models : []);
-            const list = raw.map(normalizeModel).filter(Boolean).map(declare);
+            const list = raw.map(normalizeModel).filter(Boolean)
+              .filter(m => !fixedModel || m.id === fixedModel).map(declare);
             // Ollama's /v1/models says nothing but ids. Its /api/show states each model's trained window and whether
             // it takes tools or thinks — one local call per installed model, so the picker, the compaction threshold
             // and the up-front "this model can't run tasks" check all read the server's own facts.
             if (nativeWire) await Promise.all(list.map(m => factsFor(m.id).then(f => applyFacts(m, f))));
+            // A named fixed-model profile owns the operator-facing mode metadata. Ollama's
+            // live catalog knows only the model id; retain its measured facts while restoring
+            // the profile's exact name and one allowed reasoning setting.
+            const fixedStatic = fixedModel ? staticModels.find(m => m.id === fixedModel) : null;
+            if (fixedStatic) list.forEach(m => {
+              m.name = fixedStatic.name;
+              m.supportsTools = fixedStatic.supportsTools;
+              m.supportsReasoning = fixedStatic.supportsReasoning;
+              m.reasoningEfforts = fixedStatic.reasoningEfforts.slice();
+              m.reasoningEffortsDeclared = fixedStatic.reasoningEffortsDeclared;
+              m.defaultReasoningLevel = fixedStatic.defaultReasoningLevel;
+            });
             rememberDeclared(baseUrl, list);   // live catalog only; the static fallback roster never feeds the memo
             return list;
           } catch (_) { return []; }

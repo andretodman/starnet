@@ -167,6 +167,7 @@
         baseUrl: opts.baseUrl || profile.baseUrl,
         chatPath: profile.chatPath,
         modelsPath: profile.modelsPath,
+        fixedModel: profile.fixedModel,
         reasoningEffort: profile.fixedReasoningEffort || opts.reasoningEffort,
         // profile wire hints: does this endpoint document `reasoning_effort`, and is tool support
         // asserted/denied at the provider level (fallback when the catalog carries no capability data)?

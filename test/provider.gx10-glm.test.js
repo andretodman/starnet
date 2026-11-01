@@ -42,7 +42,9 @@ module.exports = (async () => {
     let requestBody = null;
     const fetch = async (url, init) => {
       if (url.endsWith('/v1/models')) {
-        return new Response(JSON.stringify({ data: [{ id: 'glm-4.7-flash:latest' }] }), { status: 200 });
+        return new Response(JSON.stringify({ data: [
+          { id: 'glm-4.7-flash:latest' }, { id: 'qwen3:8b' }
+        ] }), { status: 200 });
       }
       if (url.endsWith('/api/show')) {
         return new Response(JSON.stringify({
@@ -60,20 +62,27 @@ module.exports = (async () => {
       throw new Error('unexpected URL ' + url);
     };
     const provider = factory.selectProvider({ provider: providerId, reasoningEffort: requestedEffort, fetch });
+    const models = await provider.listModels();
     for await (const _event of provider.stream({
-      model: 'glm-4.7-flash:latest',
+      model: 'qwen3:8b',
       messages: [{ role: 'user', content: 'Reply OK.' }],
       isTask: true
     })) {}
-    return requestBody;
+    return { requestBody, models };
   }
 
-  const fastWire = await nativeRequest('gx10-glm-fast', 'high');
+  const fastResult = await nativeRequest('gx10-glm-fast', 'high');
+  const fastWire = fastResult.requestBody;
+  A.eq(fastResult.models.map(m => m.id).join(','), 'glm-4.7-flash:latest', 'Fast hides unrelated Ollama models');
+  A.eq(fastResult.models[0].reasoningEfforts.join(','), 'none', 'Fast exposes only its fixed effort');
   A.eq(fastWire.think, false, 'Fast keeps thinking off even when a stale agent setting asks for high');
   A.eq(fastWire.options.num_ctx, 8192, 'Fast uses StarNet native request-sized context');
-  const reasoningWire = await nativeRequest('gx10-glm-reasoning', 'none');
+  const reasoningResult = await nativeRequest('gx10-glm-reasoning', 'none');
+  const reasoningWire = reasoningResult.requestBody;
+  A.eq(reasoningResult.models.map(m => m.id).join(','), 'glm-4.7-flash:latest', 'Reasoning hides unrelated Ollama models');
+  A.eq(reasoningResult.models[0].reasoningEfforts.join(','), 'high', 'Reasoning exposes only its fixed effort');
   A.eq(reasoningWire.think, true, 'Reasoning keeps thinking on even when a stale agent setting asks for off');
-  A.eq(reasoningWire.model, 'glm-4.7-flash:latest', 'Reasoning sends the installed Flash model ID');
+  A.eq(reasoningWire.model, 'glm-4.7-flash:latest', 'Reasoning overrides a stale model with the installed Flash model ID');
 
   for (const file of ['frontend/index.html', 'frontend/agent-station-demo.html']) {
     for (const id of ['gx10-glm-fast', 'gx10-glm-reasoning', 'gx10-glm']) {
